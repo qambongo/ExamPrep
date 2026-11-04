@@ -1,0 +1,14 @@
+{
+  "name": "comptia-security-plus-701",
+  "version": "1.0.0",
+  "description": "Interactive CompTIA Security+ SY0-701 study guide",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:hub": "vite build --mode hub",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.0.8"
+  }
+}

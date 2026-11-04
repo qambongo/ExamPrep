@@ -1,0 +1,107 @@
+/* ===================================================================
+   THEMES
+   Default (no data-theme) = Midnight, defined in variables.css.
+   Each theme only overrides colour tokens.
+   =================================================================== */
+
+/* --- Dark themes --- */
+
+[data-theme="slate"] {
+  --bg: #111214; --surface: #18191c; --surface2: #1e2023; --surface3: #26282c;
+  --border: #2a2c31; --border2: #383b41;
+  --text: #ececef; --text2: #b3b5bc; --muted: #84878f; --muted2: #5d6068;
+  --accent: #8b9cff; --accent2: #6272e8;
+  --gold: #f0c674; --green: #5fd4a0; --red: #ff7a8a; --amber: #f6a35b; --purple: #c49bff;
+  --heading: #ffffff; --on-accent: #0c0f2a;
+  --code-bg: #0c0d0f; --code-text: #b4bfff;
+  color-scheme: dark;
+}
+
+[data-theme="forest"] {
+  --bg: #0b1210; --surface: #101a17; --surface2: #15211d; --surface3: #1b2a25;
+  --border: #20302a; --border2: #2c4038;
+  --text: #e4efe9; --text2: #a5bdb2; --muted: #74907f; --muted2: #506a5c;
+  --accent: #4fd6a8; --accent2: #22a67b;
+  --gold: #e8cf72; --green: #7ee08a; --red: #ff7b7b; --amber: #f2a65a; --purple: #a7a2ff;
+  --heading: #f4fff9; --on-accent: #04170f;
+  --code-bg: #07100d; --code-text: #8fe3c4;
+  color-scheme: dark;
+}
+
+[data-theme="plum"] {
+  --bg: #120d17; --surface: #1a1321; --surface2: #211829; --surface3: #2a1f34;
+  --border: #2e2339; --border2: #3f304e;
+  --text: #f0e9f6; --text2: #bfb0cc; --muted: #8f7fa0; --muted2: #685a78;
+  --accent: #f07fc4; --accent2: #c34f98;
+  --gold: #f5cf7a; --green: #6ee0b0; --red: #ff7a8c; --amber: #ffab6b; --purple: #b9a0ff;
+  --heading: #ffffff; --on-accent: #22061a;
+  --code-bg: #0d0911; --code-text: #f2a8d6;
+  color-scheme: dark;
+}
+
+/* --- Light themes --- */
+
+[data-theme="daylight"] {
+  --bg: #f6f7fa; --surface: #ffffff; --surface2: #f1f3f7; --surface3: #e6e9f0;
+  --border: #e1e5ec; --border2: #cdd3de;
+  --text: #161b26; --text2: #434c5e; --muted: #687387; --muted2: #8e98aa;
+  --accent: #0a6fd6; --accent2: #0954a8;
+  --gold: #a26b00; --green: #0f8a5a; --red: #d0314e; --amber: #c25a0a; --purple: #6d48d6;
+  --heading: #0b0f18; --on-accent: #ffffff;
+  --code-bg: #f1f4f9; --code-text: #0b5cad;
+  --shadow-color: rgba(20,30,50,.18); --scrim: rgba(15,20,30,.35);
+  color-scheme: light;
+}
+
+[data-theme="sepia"] {
+  --bg: #f5efe4; --surface: #fbf7ef; --surface2: #f1e9db; --surface3: #e8ddca;
+  --border: #e3d7c2; --border2: #d2c3a8;
+  --text: #2b2117; --text2: #54463a; --muted: #7d6c5b; --muted2: #a59380;
+  --accent: #b4532a; --accent2: #8e3d1b;
+  --gold: #946100; --green: #3e7d3a; --red: #b8323e; --amber: #b85f12; --purple: #78519e;
+  --heading: #1e160e; --on-accent: #fffaf2;
+  --code-bg: #f0e7d6; --code-text: #8e3d1b;
+  --shadow-color: rgba(60,40,20,.18); --scrim: rgba(40,28,15,.35);
+  color-scheme: light;
+}
+
+/* ---- Light-theme adjustments ---- */
+
+[data-theme="daylight"] .main,
+[data-theme="sepia"] .main {
+  background:
+    radial-gradient(1200px 500px at 70% -200px, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    var(--bg);
+}
+
+[data-theme="daylight"] .card,
+[data-theme="daylight"] .def-block,
+[data-theme="daylight"] .question-card,
+[data-theme="daylight"] .domain-card,
+[data-theme="daylight"] .fact,
+[data-theme="daylight"] .extra-card,
+[data-theme="daylight"] .tbl-wrap,
+[data-theme="daylight"] .cs-block,
+[data-theme="sepia"] .card,
+[data-theme="sepia"] .def-block,
+[data-theme="sepia"] .question-card,
+[data-theme="sepia"] .domain-card,
+[data-theme="sepia"] .fact,
+[data-theme="sepia"] .extra-card,
+[data-theme="sepia"] .tbl-wrap,
+[data-theme="sepia"] .cs-block {
+  box-shadow: 0 1px 2px var(--shadow-color);
+}
+
+/* Inline colours baked into chapter content were tuned for dark backgrounds */
+[data-theme="daylight"] [style*="color:#c8d8e8"],
+[data-theme="sepia"] [style*="color:#c8d8e8"] { color: var(--text) !important; }
+[data-theme="daylight"] [style*="color:#8099b8"],
+[data-theme="sepia"] [style*="color:#8099b8"] { color: var(--text2) !important; }
+
+/* Smooth theme switching (only while switching, to avoid sluggish hovers) */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before {
+  transition: background-color .25s ease, border-color .25s ease, color .25s ease !important;
+}
