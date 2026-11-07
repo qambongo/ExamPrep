@@ -1,4 +1,5 @@
 import { QuestionCard } from './QuestionCard.js'
+import { savedAnswer, recordAnswer, clearTest, onAnswersSynced } from '../answers.js'
 
 /**
  * Renders a full practice test section.
@@ -24,7 +25,7 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
       <div class="sec-breadcrumb">${crumbs.join(' <span class="sec-breadcrumb-sep">›</span> ')}</div>
       <div class="sec-obj-tag gold">Assessment · ${total} questions</div>
       <div class="sec-title">${title}</div>
-      <div class="sec-lead">${domain}. ${subtitle}. Pick an answer to see the explanation immediately — your score appears when every question is answered.</div>
+      <div class="sec-lead">${domain}. ${subtitle}. Pick an answer to see the explanation immediately — your score appears when every question is answered. Your answers are saved, so you can stop and come back any time.</div>
     </div>
     <div class="sec-divider"></div>
     <div class="sec-body">
@@ -61,14 +62,28 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
     $('[data-bar]').style.width = `${(a / total) * 100}%`
   }
 
-  questions.forEach((q, i) => {
-    container.appendChild(QuestionCard(q, state, () => {
+  const cards = questions.map((q, i) => {
+    const card = QuestionCard(q, state, (correct, letter, restored) => {
+      if (!restored) recordAnswer(id, q.id, letter, correct)
       updateStrip()
-      if (state.answered.size === total) showFinalScore()
-    }, i + 1, total))
+      if (!restored && state.answered.size === total) showFinalScore(true)
+    }, i + 1, total)
+    container.appendChild(card)
+    return card
   })
 
-  function showFinalScore() {
+  // Replay saved answers (on load, and again if the account's answers arrive later)
+  function restore() {
+    questions.forEach((q, i) => {
+      const letter = savedAnswer(id, q.id)
+      if (letter) cards[i].answer(letter, true)
+    })
+    if (state.answered.size === total) showFinalScore(false)
+  }
+  restore()
+  onAnswersSynced(restore)
+
+  function showFinalScore(scroll) {
     const pct = Math.round((state.correct.size / total) * 100)
     const [tone, grade] =
       pct >= 90 ? ['great', 'Excellent — you are ready.'] :
@@ -81,10 +96,12 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
     $('[data-num]').textContent = `${state.correct.size}/${total}`
     $('[data-ring]').style.setProperty('--p', pct)
     $('[data-grade]').textContent = `${pct}% · ${grade}`
-    scoreEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (scroll) scoreEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 
   section.querySelectorAll('[data-reset]').forEach(btn => btn.addEventListener('click', () => {
+    if (state.answered.size && !confirm(`Clear all ${state.answered.size} saved answers for ${title}?`)) return
+    clearTest(id)
     state.answered.clear()
     state.correct.clear()
     updateStrip()

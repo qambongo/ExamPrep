@@ -1,10 +1,11 @@
 // GET    /api/progress                      -> { progress: { <questionId>: "1:<ts>" | "0:<ts>" } }
+//        (the study guide appends the chosen letter: "1:<ts>:B")
 // POST   /api/progress { set: { id: value } } -> saves answers (merged into the stored hash)
 // POST   /api/progress { clear: [id, ...] }    -> erases saved answers for those questions
 const { redis, currentUser, send, handler } = require('./_lib/store');
 
 const ID_RE = /^[a-f0-9]{10}$/;
-const VALUE_RE = /^[01]:\d{1,12}$/;
+const VALUE_RE = /^[01]:\d{1,12}(:[A-D])?$/;
 const MAX_PER_REQUEST = 2000;
 
 module.exports = handler(async (req, res) => {

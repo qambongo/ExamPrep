@@ -34,7 +34,7 @@
 * Renders a single question card and wires up answer selection.
 * @param {object} q         - Question data object from JSON
 * @param {object} state     - { answered: Set, correct: Set }
-* @param {Function} onScore - Called with (correct: boolean) after answering
+* @param {Function} onScore - Called with (correct, letter, restored) after answering
 * @param {number} index     - 1-based question number
 * @param {number} total     - Total questions in the test
 */
@@ -67,27 +67,186 @@ function QuestionCard(q, state, onScore, index, total) {
       <div class="exp-text">${q.explanation}</div>
     </div>
   `;
-	card.querySelectorAll(".option").forEach((optEl) => {
-		optEl.addEventListener("click", () => {
-			if (state.answered.has(q.id)) return;
-			state.answered.add(q.id);
-			const selected = optEl.dataset.letter;
-			const isCorrect = selected === q.correct;
-			card.classList.add("answered", isCorrect ? "is-correct" : "is-wrong");
-			card.querySelectorAll(".option").forEach((o) => {
-				o.disabled = true;
-				if (o.dataset.letter === q.correct) o.classList.add("correct");
-				else if (o.dataset.letter === selected) o.classList.add("wrong");
-			});
-			const exp = card.querySelector(".explanation");
-			exp.querySelector(".exp-title").textContent = isCorrect ? `Correct — ${q.correct}` : `Not quite — the answer is ${q.correct}`;
-			exp.classList.add("show");
-			if (!isCorrect) exp.classList.add("wrong-exp");
-			if (isCorrect) state.correct.add(q.id);
-			onScore(isCorrect);
+	/**
+	* Marks the card as answered with `selected`.
+	* `restored` = replaying a saved answer, so it isn't saved again.
+	*/
+	function answer(selected, restored = false) {
+		if (state.answered.has(q.id)) return;
+		state.answered.add(q.id);
+		const isCorrect = selected === q.correct;
+		card.classList.add("answered", isCorrect ? "is-correct" : "is-wrong");
+		card.querySelectorAll(".option").forEach((o) => {
+			o.disabled = true;
+			if (o.dataset.letter === q.correct) o.classList.add("correct");
+			else if (o.dataset.letter === selected) o.classList.add("wrong");
 		});
+		const exp = card.querySelector(".explanation");
+		exp.querySelector(".exp-title").textContent = isCorrect ? `Correct — ${q.correct}` : `Not quite — the answer is ${q.correct}`;
+		exp.classList.add("show");
+		if (!isCorrect) exp.classList.add("wrong-exp");
+		if (isCorrect) state.correct.add(q.id);
+		onScore(isCorrect, selected, restored);
+	}
+	card.querySelectorAll(".option").forEach((optEl) => {
+		optEl.addEventListener("click", () => answer(optEl.dataset.letter));
 	});
+	card.answer = answer;
 	return card;
+}
+//#endregion
+//#region src/answers.js
+/**
+* Saved test answers.
+*
+* Every answer is stored in localStorage immediately, keyed "<testId>:<questionId>"
+* with the value "<1|0>:<unix seconds>:<letter>" (1 = correct).
+*
+* When VITE_PROGRESS_API is set (the Practice Hub build), answers also sync to the
+* signed-in account through that endpoint, using the same value format as the hub's
+* topic pages. Server ids must be 10 hex chars, so each key is hashed with SHA-1.
+*/
+var LOCAL_KEY = "sp701:answers";
+var API = "/api/progress";
+var answers = load$1();
+var keyToId = /* @__PURE__ */ new Map();
+var idToKey = /* @__PURE__ */ new Map();
+var pending = {};
+var flushTimer = null;
+var syncOn = false;
+var listeners = /* @__PURE__ */ new Set();
+function load$1() {
+	try {
+		return JSON.parse(localStorage.getItem(LOCAL_KEY)) || {};
+	} catch {
+		return {};
+	}
+}
+function save$1() {
+	try {
+		localStorage.setItem(LOCAL_KEY, JSON.stringify(answers));
+	} catch {}
+}
+var tsOf = (v) => Number(String(v).split(":")[1] || 0);
+var now = () => Math.floor(Date.now() / 1e3);
+async function sha10(text) {
+	const buf = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
+	return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 10);
+}
+async function api(body) {
+	const res = await fetch(API, {
+		method: body ? "POST" : "GET",
+		credentials: "same-origin",
+		headers: body ? { "Content-Type": "application/json" } : {},
+		body: body ? JSON.stringify(body) : void 0,
+		keepalive: !!body
+	});
+	if (!res.ok) throw Object.assign(/* @__PURE__ */ new Error(`progress ${res.status}`), { status: res.status });
+	return res.json();
+}
+async function flush() {
+	clearTimeout(flushTimer);
+	if (!syncOn || !Object.keys(pending).length) return;
+	const batch = pending;
+	pending = {};
+	const set = {};
+	for (const [key, v] of Object.entries(batch)) if (keyToId.has(key)) set[keyToId.get(key)] = v;
+	try {
+		await api({ set });
+	} catch {
+		pending = {
+			...batch,
+			...pending
+		};
+	}
+}
+function queue(key, value) {
+	if (!syncOn) return;
+	pending[key] = value;
+	clearTimeout(flushTimer);
+	flushTimer = setTimeout(flush, 600);
+}
+/** Call once at startup with every test so their questions can be mapped to server ids. */
+async function initAnswers(tests) {
+	if (!window.crypto?.subtle) return;
+	try {
+		for (const t of tests) for (const q of t.questions) {
+			const key = `${t.id}:${q.id}`;
+			const id = await sha10(`sy0701-guide:${key}`);
+			keyToId.set(key, id);
+			idToKey.set(id, key);
+		}
+		const server = (await api()).progress || {};
+		syncOn = true;
+		let changed = false;
+		const upload = {};
+		for (const [id, v] of Object.entries(server)) {
+			const key = idToKey.get(id);
+			if (!key || !/^[01]:\d+:[A-D]$/.test(v)) continue;
+			if (!answers[key] || tsOf(v) > tsOf(answers[key])) {
+				answers[key] = v;
+				changed = true;
+			}
+		}
+		for (const [key, v] of Object.entries(answers)) {
+			const id = keyToId.get(key);
+			if (id && (!server[id] || tsOf(v) > tsOf(server[id]))) upload[key] = v;
+		}
+		if (changed) {
+			save$1();
+			listeners.forEach((fn) => fn());
+		}
+		if (Object.keys(upload).length) {
+			pending = {
+				...upload,
+				...pending
+			};
+			flush();
+		}
+	} catch {}
+	window.addEventListener("pagehide", () => flush());
+}
+/** The saved letter for a question, or null. */
+function savedAnswer(testId, qid) {
+	const v = answers[`${testId}:${qid}`];
+	return v ? v.split(":")[2] || null : null;
+}
+function recordAnswer(testId, qid, letter, correct) {
+	const key = `${testId}:${qid}`;
+	const value = `${correct ? 1 : 0}:${now()}:${letter}`;
+	answers[key] = value;
+	save$1();
+	queue(key, value);
+}
+function clearTest(testId) {
+	const keys = Object.keys(answers).filter((k) => k.startsWith(`${testId}:`));
+	keys.forEach((k) => {
+		delete answers[k];
+		delete pending[k];
+	});
+	save$1();
+	if (syncOn) {
+		const ids = keys.map((k) => keyToId.get(k)).filter(Boolean);
+		if (ids.length) api({ clear: ids }).catch(() => {});
+	}
+}
+/** { answered, correct } for a test, from saved answers. */
+function testScore(testId) {
+	let answered = 0, correct = 0;
+	for (const [k, v] of Object.entries(answers)) {
+		if (!k.startsWith(`${testId}:`)) continue;
+		answered++;
+		if (v[0] === "1") correct++;
+	}
+	return {
+		answered,
+		correct
+	};
+}
+/** Runs `fn` whenever answers arrive from the server. Returns an unsubscribe function. */
+function onAnswersSynced(fn) {
+	listeners.add(fn);
+	return () => listeners.delete(fn);
 }
 //#endregion
 //#region src/components/TestSection.js
@@ -115,7 +274,7 @@ function TestSection({ id, domain, title, subtitle, breadcrumb, questions }) {
       <div class="sec-breadcrumb">${breadcrumb.split("›").map((s) => s.trim()).join(" <span class=\"sec-breadcrumb-sep\">›</span> ")}</div>
       <div class="sec-obj-tag gold">Assessment · ${total} questions</div>
       <div class="sec-title">${title}</div>
-      <div class="sec-lead">${domain}. ${subtitle}. Pick an answer to see the explanation immediately — your score appears when every question is answered.</div>
+      <div class="sec-lead">${domain}. ${subtitle}. Pick an answer to see the explanation immediately — your score appears when every question is answered. Your answers are saved, so you can stop and come back any time.</div>
     </div>
     <div class="sec-divider"></div>
     <div class="sec-body">
@@ -149,13 +308,25 @@ function TestSection({ id, domain, title, subtitle, breadcrumb, questions }) {
 		$("[data-pct]").textContent = a ? `${Math.round(c / a * 100)}%` : "—";
 		$("[data-bar]").style.width = `${a / total * 100}%`;
 	}
-	questions.forEach((q, i) => {
-		container.appendChild(QuestionCard(q, state, () => {
+	const cards = questions.map((q, i) => {
+		const card = QuestionCard(q, state, (correct, letter, restored) => {
+			if (!restored) recordAnswer(id, q.id, letter, correct);
 			updateStrip();
-			if (state.answered.size === total) showFinalScore();
-		}, i + 1, total));
+			if (!restored && state.answered.size === total) showFinalScore(true);
+		}, i + 1, total);
+		container.appendChild(card);
+		return card;
 	});
-	function showFinalScore() {
+	function restore() {
+		questions.forEach((q, i) => {
+			const letter = savedAnswer(id, q.id);
+			if (letter) cards[i].answer(letter, true);
+		});
+		if (state.answered.size === total) showFinalScore(false);
+	}
+	restore();
+	onAnswersSynced(restore);
+	function showFinalScore(scroll) {
 		const pct = Math.round(state.correct.size / total * 100);
 		const [tone, grade] = pct >= 90 ? ["great", "Excellent — you are ready."] : pct >= 75 ? ["good", "Good — review the questions you missed."] : pct >= 60 ? ["warn", "Borderline — study more before the exam."] : ["bad", "Needs work — review this chapter thoroughly."];
 		const scoreEl = $(".test-score");
@@ -163,12 +334,14 @@ function TestSection({ id, domain, title, subtitle, breadcrumb, questions }) {
 		$("[data-num]").textContent = `${state.correct.size}/${total}`;
 		$("[data-ring]").style.setProperty("--p", pct);
 		$("[data-grade]").textContent = `${pct}% · ${grade}`;
-		scoreEl.scrollIntoView({
+		if (scroll) scoreEl.scrollIntoView({
 			behavior: "smooth",
 			block: "center"
 		});
 	}
 	section.querySelectorAll("[data-reset]").forEach((btn) => btn.addEventListener("click", () => {
+		if (state.answered.size && !confirm(`Clear all ${state.answered.size} saved answers for ${title}?`)) return;
+		clearTest(id);
 		state.answered.clear();
 		state.correct.clear();
 		updateStrip();
@@ -773,7 +946,11 @@ function template(progress) {
         <div class="domain-foot">
           <div class="domain-progress"><span style="width:${dDone / d.items.length * 100}%"></span></div>
           <div class="domain-tests">
-            ${tests.map((t) => `<a class="chip" href="#/${t.id}">${ICONS.test} Test ${t.num}</a>`).join("")}
+            ${tests.map((t) => {
+			const s = testScore(t.id);
+			const tag = s.answered ? `<span class="chip-score">${s.correct}/${s.answered}</span>` : "";
+			return `<a class="chip" href="#/${t.id}" title="${s.answered ? `${s.answered} answered, ${s.correct} correct` : "Not started"}">${ICONS.test} Test ${t.num}${tag}</a>`;
+		}).join("")}
           </div>
         </div>
       </article>`;
@@ -1329,6 +1506,10 @@ document.addEventListener("DOMContentLoaded", () => {
 		document.querySelector(".brand")?.after(a);
 	}
 	ThemePicker(document.getElementById("theme-host"));
+	initAnswers(TEST_CONFIGS);
+	onAnswersSynced(() => {
+		if (current === "home") renderedSections.get("home")?.refresh?.();
+	});
 	navbar = Navbar(goto, progress);
 	document.getElementById("main")?.addEventListener("scroll", updateReadProgress, { passive: true });
 	document.getElementById("menu-btn")?.addEventListener("click", openDrawer);

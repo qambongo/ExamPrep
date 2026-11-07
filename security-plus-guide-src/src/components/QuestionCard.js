@@ -2,7 +2,7 @@
  * Renders a single question card and wires up answer selection.
  * @param {object} q         - Question data object from JSON
  * @param {object} state     - { answered: Set, correct: Set }
- * @param {Function} onScore - Called with (correct: boolean) after answering
+ * @param {Function} onScore - Called with (correct, letter, restored) after answering
  * @param {number} index     - 1-based question number
  * @param {number} total     - Total questions in the test
  */
@@ -34,32 +34,39 @@ export function QuestionCard(q, state, onScore, index, total) {
     </div>
   `
 
-  card.querySelectorAll('.option').forEach(optEl => {
-    optEl.addEventListener('click', () => {
-      if (state.answered.has(q.id)) return
-      state.answered.add(q.id)
+  /**
+   * Marks the card as answered with `selected`.
+   * `restored` = replaying a saved answer, so it isn't saved again.
+   */
+  function answer(selected, restored = false) {
+    if (state.answered.has(q.id)) return
+    state.answered.add(q.id)
 
-      const selected = optEl.dataset.letter
-      const isCorrect = selected === q.correct
+    const isCorrect = selected === q.correct
 
-      card.classList.add('answered', isCorrect ? 'is-correct' : 'is-wrong')
-      card.querySelectorAll('.option').forEach(o => {
-        o.disabled = true
-        if (o.dataset.letter === q.correct) o.classList.add('correct')
-        else if (o.dataset.letter === selected) o.classList.add('wrong')
-      })
-
-      const exp = card.querySelector('.explanation')
-      exp.querySelector('.exp-title').textContent = isCorrect
-        ? `Correct — ${q.correct}`
-        : `Not quite — the answer is ${q.correct}`
-      exp.classList.add('show')
-      if (!isCorrect) exp.classList.add('wrong-exp')
-
-      if (isCorrect) state.correct.add(q.id)
-      onScore(isCorrect)
+    card.classList.add('answered', isCorrect ? 'is-correct' : 'is-wrong')
+    card.querySelectorAll('.option').forEach(o => {
+      o.disabled = true
+      if (o.dataset.letter === q.correct) o.classList.add('correct')
+      else if (o.dataset.letter === selected) o.classList.add('wrong')
     })
+
+    const exp = card.querySelector('.explanation')
+    exp.querySelector('.exp-title').textContent = isCorrect
+      ? `Correct — ${q.correct}`
+      : `Not quite — the answer is ${q.correct}`
+    exp.classList.add('show')
+    if (!isCorrect) exp.classList.add('wrong-exp')
+
+    if (isCorrect) state.correct.add(q.id)
+    onScore(isCorrect, selected, restored)
+  }
+
+  card.querySelectorAll('.option').forEach(optEl => {
+    optEl.addEventListener('click', () => answer(optEl.dataset.letter))
   })
+
+  card.answer = answer
 
   return card
 }

@@ -1,4 +1,5 @@
 import { DOMAINS, EXTRAS, ICONS, findPage } from '../nav.js'
+import { testScore } from '../answers.js'
 
 /**
  * Dashboard landing page.
@@ -72,7 +73,11 @@ function template(progress) {
         <div class="domain-foot">
           <div class="domain-progress"><span style="width:${(dDone / d.items.length) * 100}%"></span></div>
           <div class="domain-tests">
-            ${tests.map(t => `<a class="chip" href="#/${t.id}">${ICONS.test} Test ${t.num}</a>`).join('')}
+            ${tests.map(t => {
+              const s = testScore(t.id)
+              const tag = s.answered ? `<span class="chip-score">${s.correct}/${s.answered}</span>` : ''
+              return `<a class="chip" href="#/${t.id}" title="${s.answered ? `${s.answered} answered, ${s.correct} correct` : 'Not started'}">${ICONS.test} Test ${t.num}${tag}</a>`
+            }).join('')}
           </div>
         </div>
       </article>`

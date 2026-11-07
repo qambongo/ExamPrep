@@ -3,6 +3,7 @@ import { Navbar } from './components/Navbar.js'
 import { Home } from './components/Home.js'
 import { ThemePicker, applyTheme, getThemeChoice } from './components/ThemePicker.js'
 import { findPage, neighbours, ICONS } from './nav.js'
+import { initAnswers, onAnswersSynced } from './answers.js'
 
 // ── Question data imports ────────────────────────────────────────────────────
 import ch1A      from './data/ch1_TestA.json'
@@ -282,6 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('.brand')?.after(a)
   }
   ThemePicker(document.getElementById('theme-host'))
+  initAnswers(TEST_CONFIGS)
+  onAnswersSynced(() => { if (current === 'home') renderedSections.get('home')?.refresh?.() })
   navbar = Navbar(goto, progress)
 
   document.getElementById('main')?.addEventListener('scroll', updateReadProgress, { passive: true })

@@ -2463,6 +2463,13 @@ to {
 .chip svg { width: 14px; height: 14px; color: var(--gold); }
 .chip:hover { color: var(--text); border-color: var(--muted2); }
 
+.chip-score {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--green);
+  margin-left: 2px;
+}
+
 /* Extras */
 .extras-grid {
   display: grid;
