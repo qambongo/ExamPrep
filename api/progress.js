@@ -1,7 +1,8 @@
 // GET    /api/progress                      -> { progress: { <questionId>: "1:<ts>" | "0:<ts>" } }
 //        (the study guide appends the chosen letter: "1:<ts>:B")
 // POST   /api/progress { set: { id: value } } -> saves answers (merged into the stored hash)
-// POST   /api/progress { clear: [id, ...] }    -> erases saved answers for those questions
+// POST   /api/progress { clear: [id, ...] }    -> erases saved answers for those questions. Each one is
+//        replaced by a "-:<ts>" marker so other devices drop their cached copy instead of re-uploading it.
 const { redis, currentUser, send, handler } = require('./_lib/store');
 
 const ID_RE = /^[a-f0-9]{10}$/;
@@ -24,7 +25,8 @@ module.exports = handler(async (req, res) => {
     const ids = req.body.clear;
     if (ids.length > MAX_PER_REQUEST) return send(res, 413, { error: 'Too many answers in one request.' });
     if (!ids.every(id => ID_RE.test(id))) return send(res, 400, { error: 'Invalid progress data.' });
-    if (ids.length) await redis('HDEL', key, ...ids);
+    const cleared = `-:${Math.floor(Date.now() / 1000)}`;
+    if (ids.length) await redis('HSET', key, ...ids.flatMap(id => [id, cleared]));
     return send(res, 200, { cleared: ids.length });
   }
 

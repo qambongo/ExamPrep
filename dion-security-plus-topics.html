@@ -1673,14 +1673,18 @@ async function loadServerProgress(mergeGuest) {
   const data = await api('/api/progress');
   const server = data.progress || {};
   const local = { ...loadLocal(storageKey()), ...(mergeGuest ? loadLocal('sp-topics-progress:guest') : {}) };
+  // Newest value wins per question. "-:<ts>" means the answer was reset on some device,
+  // so an older cached answer here is dropped rather than uploaded again.
+  const merged = {};
   const upload = {};
+  Object.entries(server).forEach(([qid, v]) => { if (v[0] !== '-') merged[qid] = v; });
   Object.entries(local).forEach(([qid, v]) => {
     if (QUESTION_BY_ID[qid] && (!server[qid] || timestampOf(v) > timestampOf(server[qid]))) {
-      server[qid] = v;
+      merged[qid] = v;
       upload[qid] = v;
     }
   });
-  progress = server;
+  progress = merged;
   saveLocal();
   if (mergeGuest) { try { localStorage.removeItem('sp-topics-progress:guest'); } catch (e) {} }
   if (Object.keys(upload).length) {
@@ -1688,6 +1692,15 @@ async function loadServerProgress(mergeGuest) {
     await flushPending();
   }
   syncState = 'ok';
+}
+
+// Pick up answers saved on other devices when this tab comes back into view.
+async function refreshFromServer() {
+  if (!user) return;
+  await flushPending();
+  try { await loadServerProgress(false); } catch (e) { return; }
+  renderAccount();
+  renderTopics();
 }
 
 async function initAccount() {
@@ -2365,7 +2378,10 @@ document.getElementById('review-wrong-btn').addEventListener('click', () => {
 });
 document.getElementById('set-cancel').addEventListener('click', closeSet);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSet(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPending(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPending(true);
+  else refreshFromServer();
+});
 
 renderTopics();
 initAccount();

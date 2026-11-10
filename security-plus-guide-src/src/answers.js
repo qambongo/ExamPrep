@@ -73,35 +73,55 @@ function queue(key, value) {
 /** Call once at startup with every test so their questions can be mapped to server ids. */
 export async function initAnswers(tests) {
   if (!API || !window.crypto?.subtle) return
-  try {
-    for (const t of tests) {
-      for (const q of t.questions) {
-        const key = `${t.id}:${q.id}`
-        const id = await sha10(`sy0701-guide:${key}`)
-        keyToId.set(key, id)
-        idToKey.set(id, key)
-      }
+  for (const t of tests) {
+    for (const q of t.questions) {
+      const key = `${t.id}:${q.id}`
+      const id = await sha10(`sy0701-guide:${key}`)
+      keyToId.set(key, id)
+      idToKey.set(id, key)
     }
-    const server = (await api()).progress || {}
-    syncOn = true
-
-    let changed = false
-    const upload = {}
-    for (const [id, v] of Object.entries(server)) {
-      const key = idToKey.get(id)
-      if (!key || !/^[01]:\d+:[A-D]$/.test(v)) continue
-      if (!answers[key] || tsOf(v) > tsOf(answers[key])) { answers[key] = v; changed = true }
-    }
-    for (const [key, v] of Object.entries(answers)) {
-      const id = keyToId.get(key)
-      if (id && (!server[id] || tsOf(v) > tsOf(server[id]))) upload[key] = v
-    }
-    if (changed) { save(); listeners.forEach(fn => fn()) }
-    if (Object.keys(upload).length) { pending = { ...upload, ...pending }; flush() }
-  } catch {
-    // Not signed in, offline, or no API: keep working from localStorage only.
   }
+  await pullFromServer()
   window.addEventListener('pagehide', () => flush())
+  // Pick up answers saved (or reset) on other devices when this tab comes back into view.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush()
+    else if (syncOn) flush().then(pullFromServer)
+  })
+}
+
+// Newest value wins per question. A server value of "-:<ts>" means the answer was reset
+// on some device, so an older copy cached here is dropped instead of uploaded again.
+async function pullFromServer() {
+  let server
+  try {
+    server = (await api()).progress || {}
+  } catch {
+    return   // Not signed in, offline, or no API: keep working from localStorage only.
+  }
+  syncOn = true
+
+  let changed = false
+  const upload = {}
+  for (const [id, v] of Object.entries(server)) {
+    const key = idToKey.get(id)
+    if (!key || key in pending) continue
+    const cleared = v[0] === '-'
+    if (!cleared && !/^[01]:\d+:[A-D]$/.test(v)) continue
+    if (answers[key] && tsOf(v) < tsOf(answers[key])) continue
+    if (cleared) {
+      if (answers[key]) { delete answers[key]; changed = true }
+    } else if (answers[key] !== v) {
+      answers[key] = v
+      changed = true
+    }
+  }
+  for (const [key, v] of Object.entries(answers)) {
+    const id = keyToId.get(key)
+    if (id && (!server[id] || tsOf(v) > tsOf(server[id]))) upload[key] = v
+  }
+  if (changed) { save(); listeners.forEach(fn => fn()) }
+  if (Object.keys(upload).length) { pending = { ...upload, ...pending }; flush() }
 }
 
 /** The saved letter for a question, or null. */
@@ -139,7 +159,7 @@ export function testScore(testId) {
   return { answered, correct }
 }
 
-/** Runs `fn` whenever answers arrive from the server. Returns an unsubscribe function. */
+/** Runs `fn` whenever answers arrive from (or are cleared on) the server. Returns an unsubscribe function. */
 export function onAnswersSynced(fn) {
   listeners.add(fn)
   return () => listeners.delete(fn)

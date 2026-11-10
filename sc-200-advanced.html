@@ -24,6 +24,7 @@
   </div>
 </header>
 <script src="assets/session.js"></script>
+<script src="assets/quiz-sync.js"></script>
 
 <main class="container">
   <div class="page-hero">
@@ -253,6 +254,7 @@ function saveProgress() {
   };
   try {
     localStorage.setItem(progressStorageKey, JSON.stringify(progress));
+    QuizSync.saved();
     setSaveStatus('Progress saved');
   } catch (error) {
     setSaveStatus('Unable to save progress in this browser');
@@ -587,6 +589,7 @@ if (!restoreProgress()) {
   updateStats();
   loadQuestion();
 }
+QuizSync.attach(progressStorageKey, 'sc-200-advanced');
 </script>
 </body>
 </html>

@@ -74,6 +74,8 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
 
   // Replay saved answers (on load, and again if the account's answers arrive later)
   function restore() {
+    // Answers were reset on another device: clear the page before replaying what is left.
+    if (questions.some(q => state.answered.has(q.id) && !savedAnswer(id, q.id))) resetView(false)
     questions.forEach((q, i) => {
       const letter = savedAnswer(id, q.id)
       if (letter) cards[i].answer(letter, true)
@@ -99,9 +101,7 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
     if (scroll) scoreEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 
-  section.querySelectorAll('[data-reset]').forEach(btn => btn.addEventListener('click', () => {
-    if (state.answered.size && !confirm(`Clear all ${state.answered.size} saved answers for ${title}?`)) return
-    clearTest(id)
+  function resetView(scroll) {
     state.answered.clear()
     state.correct.clear()
     updateStrip()
@@ -112,7 +112,13 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
     })
     section.querySelectorAll('.explanation').forEach(e => e.classList.remove('show', 'wrong-exp'))
     section.querySelectorAll('.question-card').forEach(c => c.classList.remove('answered', 'is-correct', 'is-wrong'))
-    document.getElementById('main').scrollTo({ top: 0, behavior: 'smooth' })
+    if (scroll) document.getElementById('main').scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  section.querySelectorAll('[data-reset]').forEach(btn => btn.addEventListener('click', () => {
+    if (state.answered.size && !confirm(`Clear all ${state.answered.size} saved answers for ${title}?`)) return
+    clearTest(id)
+    resetView(true)
   }))
 
   return section

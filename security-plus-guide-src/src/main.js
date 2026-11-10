@@ -4,6 +4,7 @@ import { Home } from './components/Home.js'
 import { ThemePicker, applyTheme, getThemeChoice } from './components/ThemePicker.js'
 import { findPage, neighbours, ICONS } from './nav.js'
 import { initAnswers, onAnswersSynced } from './answers.js'
+import { initVisitedSync, visitedChanged } from './visited.js'
 
 // ── Question data imports ────────────────────────────────────────────────────
 import ch1A      from './data/ch1_TestA.json'
@@ -140,17 +141,17 @@ const TEST_CONFIGS = [
   },
 ]
 
-// ── Progress (persisted per browser) ─────────────────────────────────────────
+// ── Progress (saved in this browser, synced to the account on the hub build) ──
 const STORE_KEY = 'sp701:progress'
 const progress = (() => {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY)) || {}
-    return { visited: new Set(raw.visited || []), last: raw.last || null }
-  } catch { return { visited: new Set(), last: null } }
+    return { visited: new Set(raw.visited || []), last: raw.last || null, lastAt: Number(raw.lastAt) || 0 }
+  } catch { return { visited: new Set(), last: null, lastAt: 0 } }
 })()
 function saveProgress() {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({ visited: [...progress.visited], last: progress.last }))
+    localStorage.setItem(STORE_KEY, JSON.stringify({ visited: [...progress.visited], last: progress.last, lastAt: progress.lastAt }))
   } catch { /* storage unavailable */ }
 }
 
@@ -240,7 +241,9 @@ async function goto(id) {
   if (id !== 'home') {
     progress.visited.add(id)
     progress.last = id
+    progress.lastAt = Date.now()
     saveProgress()
+    visitedChanged()
   }
   const page = findPage(id)
   document.getElementById('crumbs').innerHTML = crumbsFor(page)
@@ -286,6 +289,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initAnswers(TEST_CONFIGS)
   onAnswersSynced(() => { if (current === 'home') renderedSections.get('home')?.refresh?.() })
   navbar = Navbar(goto, progress)
+  // Lessons opened on other devices: save them here and redraw the counts.
+  initVisitedSync(progress, () => {
+    saveProgress()
+    navbar.refreshProgress()
+    if (current === 'home') renderedSections.get('home')?.refresh?.()
+  })
 
   document.getElementById('main')?.addEventListener('scroll', updateReadProgress, { passive: true })
   document.getElementById('menu-btn')?.addEventListener('click', openDrawer)

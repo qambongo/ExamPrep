@@ -20,6 +20,7 @@
   </div>
 </header>
 <script src="assets/session.js"></script>
+<script src="assets/quiz-sync.js"></script>
 
 <main class="container">
   <div class="page-hero">
@@ -1039,6 +1040,57 @@ let totalAllowedSeconds = 0;
 let quizStartTime = null;
 let quizEndedEarly = false;
 let timeExpired = false;
+let examFinished = false;
+let usedHere = false;   // the user did something in this tab since it was last hidden
+
+/* ---------- Saved progress ----------
+   The current exam (answers, position, time left, or the finished results) is kept in
+   localStorage and synced to the signed-in account, so it survives refreshes and
+   follows you to other browsers and devices. The timer pauses while the page is closed. */
+const PAGE_ID = (location.pathname.split('/').pop() || 'security-plus').replace(/\.html$/, '') || 'security-plus';
+const EXAM_KEY = 'exam-progress:' + PAGE_ID;
+
+function saveExam() {
+  const data = selectedModuleName && activeQuestions.length
+    ? { module: selectedModuleName, count: activeQuestions.length, currentIndex, selections, answeredState,
+        matchOptionsCache, totalAllowedSeconds, secondsRemaining, quizEndedEarly, timeExpired, finished: examFinished }
+    : { module: null };
+  try { localStorage.setItem(EXAM_KEY, JSON.stringify(data)); } catch (e) { return; }
+  QuizSync.saved();
+}
+
+function userChanged() {
+  usedHere = true;
+  saveExam();
+}
+
+function restoreExam() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem(EXAM_KEY)); } catch (e) { return; }
+  if (!s || !s.module || !MODULE_ORDER.includes(s.module)) return;
+  const qs = getModuleQuestions(s.module);
+  if (qs.length !== s.count) return;   // the question bank changed since this was saved
+  selectedModuleName = s.module;
+  activeQuestions = qs;
+  currentIndex = Math.min(Math.max(0, Number(s.currentIndex) || 0), qs.length - 1);
+  selections = s.selections || {};
+  answeredState = s.answeredState || {};
+  matchOptionsCache = s.matchOptionsCache || {};
+  totalAllowedSeconds = Number(s.totalAllowedSeconds) || qs.length * TIME_PER_QUESTION_SECONDS;
+  secondsRemaining = Number.isFinite(s.secondsRemaining) ? s.secondsRemaining : totalAllowedSeconds;
+  quizEndedEarly = !!s.quizEndedEarly;
+  timeExpired = !!s.timeExpired;
+  examFinished = !!s.finished;
+
+  document.getElementById('select-screen').classList.add('hidden');
+  if (examFinished) {
+    showResults();
+  } else {
+    document.getElementById('quiz-screen').classList.remove('hidden');
+    startTimer();
+    loadQuestion();
+  }
+}
 
 function getModuleQuestions(moduleName) {
   return questions.filter(q => q.m === moduleName);
@@ -1095,6 +1147,7 @@ function startModule() {
   totalAllowedSeconds = activeQuestions.length * TIME_PER_QUESTION_SECONDS;
   secondsRemaining = totalAllowedSeconds;
   quizStartTime = Date.now();
+  examFinished = false;
 
   document.getElementById('select-screen').classList.add('hidden');
   document.getElementById('quiz-screen').classList.remove('hidden');
@@ -1103,6 +1156,7 @@ function startModule() {
 
   startTimer();
   loadQuestion();
+  userChanged();
 }
 
 function startTimer() {
@@ -1244,6 +1298,7 @@ function toggleOption(index, element, isMulti) {
 
   const requiredCount = isMulti ? q.need : 1;
   document.getElementById('check-btn').disabled = current.length !== requiredCount;
+  userChanged();
 }
 
 function renderOrderList(q, answered) {
@@ -1278,6 +1333,7 @@ function moveOrderItem(pos, dir) {
   if (swapWith < 0 || swapWith >= order.length) return;
   [order[pos], order[swapWith]] = [order[swapWith], order[pos]];
   renderOrderList(activeQuestions[currentIndex], false);
+  userChanged();
 }
 
 function renderMatchList(q, answered) {
@@ -1308,6 +1364,7 @@ function setMatchSelection(rowIndex, value) {
   if (answeredState[currentIndex]) return;
   selections[currentIndex][rowIndex] = value;
   document.getElementById('check-btn').disabled = selections[currentIndex].some(v => !v);
+  userChanged();
 }
 
 function isAnswerCorrect(q, selected) {
@@ -1331,6 +1388,7 @@ function checkAnswer() {
   if ((q.type === 'single' || q.type === 'multi') && selected.length === 0) return;
   answeredState[currentIndex] = true;
   renderFeedback(q, selected);
+  userChanged();
 }
 
 function renderFeedback(q, selected) {
@@ -1406,6 +1464,7 @@ function nextQuestion() {
   if (currentIndex < activeQuestions.length - 1) {
     currentIndex++;
     loadQuestion();
+    userChanged();
   } else {
     finishModule();
   }
@@ -1416,6 +1475,7 @@ function skipQuestion() {
   if (currentIndex < activeQuestions.length - 1) {
     currentIndex++;
     loadQuestion();
+    userChanged();
   } else {
     finishModule();
   }
@@ -1423,6 +1483,8 @@ function skipQuestion() {
 
 function finishModule() {
   clearInterval(timerInterval);
+  examFinished = true;
+  userChanged();
   document.getElementById('quiz-screen').classList.add('hidden');
   showResults();
 }
@@ -1577,6 +1639,9 @@ function showReview() {
 
 function backToModuleSelect() {
   clearInterval(timerInterval);
+  activeQuestions = [];
+  examFinished = false;
+  userChanged();
   document.getElementById('select-screen').classList.remove('hidden');
   document.getElementById('quiz-screen').classList.add('hidden');
   document.getElementById('results-screen').classList.add('hidden');
@@ -1604,6 +1669,17 @@ document.getElementById('explanation-toggle').addEventListener('click', () => {
 });
 
 renderModuleGrid();
+restoreExam();
+// Save the time left when leaving, but only if this tab was used, so an idle tab on
+// another device can't overwrite newer progress. Registered before QuizSync so the
+// save is included in its final upload.
+function saveTimeOnLeave() {
+  if (usedHere && activeQuestions.length && !examFinished) saveExam();
+  usedHere = false;
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveTimeOnLeave(); });
+window.addEventListener('pagehide', saveTimeOnLeave);
+QuizSync.attach(EXAM_KEY, PAGE_ID + '-exam');
 </script>
 </body>
 </html>

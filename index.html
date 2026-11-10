@@ -218,7 +218,7 @@ function renderProgress(progress, banks) {
     let correct = 0, answered = 0;
     ids.forEach(id => {
       const v = progress[id];
-      if (!v) return;
+      if (!v || v[0] === '-') return;   // '-' marks a reset answer
       answered++;
       if (v[0] === '1') correct++;
     });

@@ -112,6 +112,7 @@ export function Navbar(goto, progress) {
   refreshProgress()
 
   return {
+    refreshProgress,
     setActive(id) {
       let activeEl = null
       nav.querySelectorAll('.nav-item').forEach(el => {
