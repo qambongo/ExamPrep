@@ -21,6 +21,7 @@
 </header>
 <script src="assets/session.js"></script>
 <script src="assets/quiz-sync.js"></script>
+<script src="assets/dion-question-key.js"></script>
 
 <main class="container">
   <div class="page-hero">
@@ -740,6 +741,7 @@ let isWrongRetry = false;
 let retryQuestionIndices = [];
 let completedExamScores = {};
 let savedExamAttempts = {};
+let topicAnswerProgress = {};
 let isExamSuspended = false;
 let suspendedModuleName = null;
 let usedHere = false;   // the user did something in this tab since it was last hidden
@@ -767,7 +769,8 @@ function saveExam() {
   const data = {
     attempts: savedExamAttempts,
     activeModule: savedModuleName && activeQuestions.length && !examFinished ? savedModuleName : null,
-    completedExamScores
+    completedExamScores,
+    topicAnswerProgress
   };
   try { localStorage.setItem(EXAM_KEY, JSON.stringify(data)); } catch (e) { return; }
   QuizSync.saved();
@@ -784,6 +787,7 @@ function restoreExam() {
   if (!s || typeof s !== 'object') return;
   completedExamScores = {};
   savedExamAttempts = {};
+  topicAnswerProgress = {};
   if (s.completedExamScores && typeof s.completedExamScores === 'object') {
     MODULE_ORDER.forEach(name => {
       const score = s.completedExamScores[name];
@@ -791,6 +795,13 @@ function restoreExam() {
       if (score && Number.isInteger(score.correct) && Number.isInteger(score.total)
           && score.total === total && score.correct >= 0 && score.correct <= score.total) {
         completedExamScores[name] = { correct: score.correct, total: score.total };
+      }
+    });
+  }
+  if (s.topicAnswerProgress && typeof s.topicAnswerProgress === 'object') {
+    Object.entries(s.topicAnswerProgress).forEach(([key, result]) => {
+      if (/^dq-[a-z0-9]+-[a-z0-9]+$/.test(key) && /^(0|1):\d+$/.test(result)) {
+        topicAnswerProgress[key] = result;
       }
     });
   }
@@ -1283,6 +1294,8 @@ function checkAnswer() {
   if (q.type === 'match' && selected.some(v => !v)) return;
   if ((q.type === 'single' || q.type === 'multi') && selected.length === 0) return;
   answeredState[currentIndex] = true;
+  topicAnswerProgress[DionQuestionKey(q.q)] =
+    `${isAnswerCorrect(q, selected) ? 1 : 0}:${Math.floor(Date.now() / 1000)}`;
   renderFeedback(q, selected);
   userChanged();
 }

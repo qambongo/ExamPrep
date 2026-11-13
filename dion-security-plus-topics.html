@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="assets/theme.js"></script>
+<script src="assets/dion-question-key.js"></script>
 <title>Dion Security+ by Topic</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233f56d8'/%3E%3Cpath d='M16 6l-8 3v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V9l-8-3z' fill='none' stroke='white' stroke-width='2.4' stroke-linejoin='round'/%3E%3Cpath d='M12.5 15.5l2.5 2.5 4.5-4.5' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -86,7 +87,7 @@
       <div class="exam-badge">D</div>
       <div>
         <h1>Dion Security+ by Topic</h1>
-        <p>Jason Dion question bank &middot; 540 questions grouped by SY0-701 objective. Pick a short set to practice.</p>
+        <p>Jason Dion question bank &middot; 540 questions grouped by SY0-701 objective. Full-exam answers also update your topic progress.</p>
       </div>
     </div>
   </div>
@@ -1606,6 +1607,9 @@ const questions = [
 const TIME_PER_QUESTION_SECONDS = 60;
 const QUESTION_BY_ID = Object.fromEntries(questions.map(q => [q.id, q]));
 const OBJECTIVE_BY_ID = Object.fromEntries(OBJECTIVES.map(o => [o.id, o]));
+const DION_EXAM_PROGRESS_KEY = 'exam-progress:dion-security-plus';
+const DION_EXAM_ACCOUNT_KEY = 'dion-security-plus-exam';
+const DION_EXAM_STAMP_KEY = `${DION_EXAM_PROGRESS_KEY}:savedAt`;
 
 /* ---------- Progress storage ----------
    progress maps question id -> "1:<unix seconds>" (correct) or "0:<unix seconds>" (incorrect).
@@ -1622,6 +1626,49 @@ function loadLocal(key) {
 }
 function saveLocal() {
   try { localStorage.setItem(storageKey(), JSON.stringify(progress)); } catch (e) {}
+}
+
+async function pullDionExamProgress() {
+  if (!user) return;
+  const server = await api(`/api/state?key=${encodeURIComponent(DION_EXAM_ACCOUNT_KEY)}`);
+  if (typeof server.value !== 'string') return;
+  const localStamp = Number(localStorage.getItem(DION_EXAM_STAMP_KEY)) || 0;
+  if (server.updatedAt > localStamp) {
+    const state = JSON.parse(server.value);
+    if (!state || typeof state !== 'object') return;
+    localStorage.setItem(DION_EXAM_PROGRESS_KEY, server.value);
+    localStorage.setItem(DION_EXAM_STAMP_KEY, String(server.updatedAt));
+  }
+}
+
+async function clearDionExamTopicAnswers() {
+  if (user) await pullDionExamProgress();
+  const state = loadLocal(DION_EXAM_PROGRESS_KEY);
+  if (!state.topicAnswerProgress) return;
+  delete state.topicAnswerProgress;
+  const value = JSON.stringify(state);
+  const updatedAt = Math.max(Date.now(), (Number(localStorage.getItem(DION_EXAM_STAMP_KEY)) || 0) + 1);
+  localStorage.setItem(DION_EXAM_PROGRESS_KEY, value);
+  localStorage.setItem(DION_EXAM_STAMP_KEY, String(updatedAt));
+  if (!user) return;
+
+  let response = await api('/api/state', {
+    method: 'POST',
+    body: JSON.stringify({ key: DION_EXAM_ACCOUNT_KEY, value, updatedAt }),
+  });
+  if (response.saved === false) {
+    const newest = JSON.parse(response.value);
+    if (newest && typeof newest === 'object') delete newest.topicAnswerProgress;
+    const retryValue = JSON.stringify(newest);
+    const retryAt = Math.max(Date.now(), (Number(response.updatedAt) || 0) + 1);
+    localStorage.setItem(DION_EXAM_PROGRESS_KEY, retryValue);
+    localStorage.setItem(DION_EXAM_STAMP_KEY, String(retryAt));
+    response = await api('/api/state', {
+      method: 'POST',
+      body: JSON.stringify({ key: DION_EXAM_ACCOUNT_KEY, value: retryValue, updatedAt: retryAt }),
+    });
+    if (response.saved === false) throw new Error('Exam progress changed on another device. Please try again.');
+  }
 }
 
 async function api(path, options = {}) {
@@ -1649,6 +1696,25 @@ function recordResult(qid, correct) {
     clearTimeout(flushTimer);
     flushTimer = setTimeout(flushPending, 600);
   }
+}
+
+function mergeDionExamProgress() {
+  const examProgress = loadLocal(DION_EXAM_PROGRESS_KEY);
+  const results = examProgress.topicAnswerProgress;
+  if (!results || typeof results !== 'object') return false;
+  const idByKey = new Map(questions.map(q => [DionQuestionKey(q.q), q.id]));
+  let changed = false;
+  Object.entries(results).forEach(([key, result]) => {
+    const qid = idByKey.get(key);
+    if (!qid || !/^(0|1):\d+$/.test(result)) return;
+    if (!progress[qid] || timestampOf(result) > timestampOf(progress[qid])) {
+      progress[qid] = result;
+      if (user) pending[qid] = result;
+      changed = true;
+    }
+  });
+  if (changed) saveLocal();
+  return changed;
 }
 
 async function flushPending(keepalive = false) {
@@ -1696,9 +1762,21 @@ async function loadServerProgress(mergeGuest) {
 
 // Pick up answers saved on other devices when this tab comes back into view.
 async function refreshFromServer() {
-  if (!user) return;
+  if (!user) {
+    if (mergeDionExamProgress()) renderTopics();
+    return;
+  }
   await flushPending();
-  try { await loadServerProgress(false); } catch (e) { return; }
+  try {
+    await loadServerProgress(false);
+    await pullDionExamProgress();
+  } catch (e) {
+    if (mergeDionExamProgress()) renderTopics();
+    if (Object.keys(pending).length) await flushPending();
+    return;
+  }
+  mergeDionExamProgress();
+  await flushPending();
   renderAccount();
   renderTopics();
 }
@@ -1712,6 +1790,7 @@ async function initAccount() {
       renderAccount();
       renderTopics();
       await loadServerProgress(true);
+      try { await pullDionExamProgress(); } catch (e) { syncState = 'error'; }
     } else {
       progress = loadLocal(storageKey());
       syncState = 'local';
@@ -1720,6 +1799,8 @@ async function initAccount() {
     progress = loadLocal(storageKey());
     syncState = 'offline';
   }
+  mergeDionExamProgress();
+  if (user && Object.keys(pending).length) await flushPending();
   renderAccount();
   renderTopics();
 }
@@ -1771,6 +1852,7 @@ async function resetProgress() {
     if (user) await api('/api/progress', { method: 'POST', body: JSON.stringify({ clear: ids }) });
     ids.forEach(id => { delete progress[id]; delete pending[id]; });
     saveLocal();
+    await clearDionExamTopicAnswers();
   } catch (e) {
     alert('Could not reset progress: ' + e.message);
   }
@@ -2381,6 +2463,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSet(); 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flushPending(true);
   else refreshFromServer();
+});
+window.addEventListener('storage', async event => {
+  if (event.key !== DION_EXAM_PROGRESS_KEY || !mergeDionExamProgress()) return;
+  renderTopics();
+  if (user) await flushPending();
 });
 
 renderTopics();
