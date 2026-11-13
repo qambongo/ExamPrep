@@ -37,6 +37,15 @@
   <!-- MODULE SELECT SCREEN -->
   <div id="select-screen">
     <div class="section-title"><h2>Choose a practice exam</h2><span>1 minute per question</span></div>
+    <div class="start-panel hidden" id="resume-panel">
+      <h2 id="resume-panel-title">Unfinished exam</h2>
+      <p id="resume-panel-desc" style="color: var(--muted); margin: 0;">Resume where you left off, or choose another exam below.</p>
+      <div class="details">
+        <div><strong id="resume-panel-progress"></strong>Question</div>
+        <div><strong id="resume-panel-time"></strong>Time remaining</div>
+      </div>
+      <button class="btn-primary" id="resume-exam-btn" type="button">Resume saved exam</button>
+    </div>
     <div class="module-grid" id="module-grid"></div>
     <div class="start-panel hidden" id="start-panel">
       <h2 id="start-panel-title"></h2>
@@ -727,6 +736,9 @@ let examFinished = false;
 let isWrongRetry = false;
 let retryQuestionIndices = [];
 let completedExamScores = {};
+let unfinishedExamProgress = null;
+let isExamSuspended = false;
+let suspendedModuleName = null;
 let usedHere = false;   // the user did something in this tab since it was last hidden
 
 /* ---------- Saved progress ----------
@@ -755,6 +767,7 @@ function restoreExam() {
   let s;
   try { s = JSON.parse(localStorage.getItem(EXAM_KEY)); } catch (e) { return; }
   if (!s || typeof s !== 'object') return;
+  unfinishedExamProgress = null;
   completedExamScores = {};
   if (s.completedExamScores && typeof s.completedExamScores === 'object') {
     MODULE_ORDER.forEach(name => {
@@ -794,13 +807,28 @@ function restoreExam() {
   timeExpired = !!s.timeExpired;
   examFinished = !!s.finished;
 
-  document.getElementById('select-screen').classList.add('hidden');
   if (examFinished) {
+    document.getElementById('select-screen').classList.add('hidden');
     showResults(true);
   } else {
-    document.getElementById('quiz-screen').classList.remove('hidden');
-    startTimer();
-    loadQuestion();
+    isExamSuspended = true;
+    suspendedModuleName = s.module;
+    const answeredCount = Object.values(answeredState).filter(answered => answered === true).length;
+    unfinishedExamProgress = {
+      module: s.module,
+      position: currentIndex + 1,
+      answered: answeredCount,
+      total: activeQuestions.length,
+      isWrongRetry
+    };
+    renderModuleGrid();
+    document.getElementById('resume-panel-title').textContent = isWrongRetry
+      ? `${s.module} · Missed-question retake`
+      : s.module;
+    document.getElementById('resume-panel-progress').textContent =
+      `${currentIndex + 1}/${activeQuestions.length}`;
+    document.getElementById('resume-panel-time').textContent = formatTime(secondsRemaining);
+    document.getElementById('resume-panel').classList.remove('hidden');
   }
 }
 
@@ -814,6 +842,7 @@ function renderModuleGrid() {
   MODULE_ORDER.forEach(name => {
     const count = getModuleQuestions(name).length;
     const score = completedExamScores[name];
+    const progress = unfinishedExamProgress?.module === name ? unfinishedExamProgress : null;
     const card = document.createElement('div');
     card.className = 'module-card';
     const source = document.createElement('span');
@@ -823,16 +852,29 @@ function renderModuleGrid() {
     title.textContent = name;
     const detail = document.createElement('div');
     detail.className = 'count';
-    detail.textContent = score
-      ? `${count} questions · Last score ${score.correct}/${score.total} (${Math.round((score.correct / score.total) * 100)}%)`
-      : `${count} questions available`;
+    const status = [`${count} questions`];
+    if (progress) {
+      const progressPercent = Math.round((progress.answered / progress.total) * 100);
+      status.push(`${progress.isWrongRetry ? 'Retake progress' : 'In progress'}: question ${progress.position}/${progress.total} · ${progress.answered}/${progress.total} answered (${progressPercent}%)`);
+    }
+    if (score) {
+      status.push(`Last score ${score.correct}/${score.total} (${Math.round((score.correct / score.total) * 100)}%)`);
+    } else if (!progress) {
+      status.push('Available');
+    }
+    detail.textContent = status.join(' · ');
     card.append(source, title, detail);
     card.onclick = () => selectModule(name, card);
     grid.appendChild(card);
   });
 }
 
+function hasUnfinishedExam() {
+  return activeQuestions.length > 0 && !examFinished && !isExamSuspended;
+}
+
 function selectModule(name, cardEl) {
+  if (hasUnfinishedExam()) return;
   selectedModuleName = name;
   document.querySelectorAll('.module-card').forEach(c => c.classList.remove('selected'));
   cardEl.classList.add('selected');
@@ -856,6 +898,14 @@ function formatTime(totalSeconds) {
 }
 
 function startModule() {
+  if (hasUnfinishedExam() || !selectedModuleName) return;
+  if (isExamSuspended && !confirm(
+    `Starting ${selectedModuleName} will replace your unfinished ${suspendedModuleName} attempt. Continue?`
+  )) return;
+  isExamSuspended = false;
+  suspendedModuleName = null;
+  unfinishedExamProgress = null;
+  document.getElementById('resume-panel').classList.add('hidden');
   activeQuestions = getModuleQuestions(selectedModuleName);
   isWrongRetry = false;
   retryQuestionIndices = [];
@@ -875,6 +925,23 @@ function startModule() {
   document.getElementById('results-screen').classList.add('hidden');
   document.getElementById('review-screen').classList.add('hidden');
 
+  startTimer();
+  loadQuestion();
+  userChanged();
+}
+
+function resumeSavedExam() {
+  if (!isExamSuspended || !activeQuestions.length) return;
+  selectedModuleName = suspendedModuleName;
+  document.querySelectorAll('.module-card').forEach(card => {
+    card.classList.toggle('selected', card.querySelector('h3').textContent === selectedModuleName);
+  });
+  isExamSuspended = false;
+  suspendedModuleName = null;
+  document.getElementById('resume-panel').classList.add('hidden');
+  document.getElementById('start-panel').classList.add('hidden');
+  document.getElementById('select-screen').classList.add('hidden');
+  document.getElementById('quiz-screen').classList.remove('hidden');
   startTimer();
   loadQuestion();
   userChanged();
@@ -1246,11 +1313,12 @@ function showResults(restoring = false) {
   const timeTaken = totalAllowedSeconds - secondsRemaining;
   const wrongIndices = getIncorrectQuestionIndices();
 
+  unfinishedExamProgress = null;
   if (!isWrongRetry) {
     completedExamScores[selectedModuleName] = { correct, total };
-    renderModuleGrid();
     if (!restoring) saveExam();
   }
+  renderModuleGrid();
 
   document.getElementById('results-module-name').textContent = isWrongRetry
     ? `${selectedModuleName} — Incorrect Question Retake Results`
@@ -1338,6 +1406,12 @@ function startWrongQuestionRetake() {
   secondsRemaining = totalAllowedSeconds;
   quizStartTime = Date.now();
   examFinished = false;
+  unfinishedExamProgress = {
+    module: selectedModuleName,
+    answered: 0,
+    total: activeQuestions.length,
+    isWrongRetry: true
+  };
 
   document.getElementById('results-screen').classList.add('hidden');
   document.getElementById('review-screen').classList.add('hidden');
@@ -1427,21 +1501,28 @@ function showReview() {
 }
 
 function backToModuleSelect() {
+  if (hasUnfinishedExam()) return;
   clearInterval(timerInterval);
   activeQuestions = [];
   examFinished = false;
   isWrongRetry = false;
   retryQuestionIndices = [];
+  isExamSuspended = false;
+  suspendedModuleName = null;
+  unfinishedExamProgress = null;
   userChanged();
   document.getElementById('select-screen').classList.remove('hidden');
   document.getElementById('quiz-screen').classList.add('hidden');
   document.getElementById('results-screen').classList.add('hidden');
   document.getElementById('review-screen').classList.add('hidden');
+  document.getElementById('resume-panel').classList.add('hidden');
   document.getElementById('start-panel').classList.add('hidden');
   document.querySelectorAll('.module-card').forEach(c => c.classList.remove('selected'));
+  renderModuleGrid();
 }
 
 document.getElementById('start-btn').addEventListener('click', startModule);
+document.getElementById('resume-exam-btn').addEventListener('click', resumeSavedExam);
 document.getElementById('check-btn').addEventListener('click', checkAnswer);
 document.getElementById('skip-btn').addEventListener('click', skipQuestion);
 document.getElementById('next-btn').addEventListener('click', nextQuestion);
