@@ -39,7 +39,7 @@
     <div class="section-title"><h2>Choose a practice exam</h2><span>1 minute per question</span></div>
     <div class="start-panel hidden" id="resume-panel">
       <h2 id="resume-panel-title">Unfinished exam</h2>
-      <p id="resume-panel-desc" style="color: var(--muted); margin: 0;">Resume where you left off, or choose another exam below.</p>
+      <p id="resume-panel-desc" style="color: var(--muted); margin: 0;">Resume where you left off, or choose another exam. Progress is saved separately for each exam.</p>
       <div class="details">
         <div><strong id="resume-panel-progress"></strong>Question</div>
         <div><strong id="resume-panel-time"></strong>Time remaining</div>
@@ -67,6 +67,9 @@
         <div class="status-item timer" id="timer-display">60:00</div>
       </div>
       <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="result-actions">
+        <button class="btn-secondary" id="save-choose-module-btn" type="button">Save &amp; Choose Another Exam</button>
+      </div>
     </div>
 
     <div class="quiz-card" id="quiz-container">
@@ -736,7 +739,7 @@ let examFinished = false;
 let isWrongRetry = false;
 let retryQuestionIndices = [];
 let completedExamScores = {};
-let unfinishedExamProgress = null;
+let savedExamAttempts = {};
 let isExamSuspended = false;
 let suspendedModuleName = null;
 let usedHere = false;   // the user did something in this tab since it was last hidden
@@ -749,11 +752,23 @@ const PAGE_ID = (location.pathname.split('/').pop() || 'security-plus').replace(
 const EXAM_KEY = 'exam-progress:' + PAGE_ID;
 
 function saveExam() {
-  const data = selectedModuleName && activeQuestions.length
-    ? { module: selectedModuleName, count: activeQuestions.length, currentIndex, selections, answeredState,
-        matchOptionsCache, totalAllowedSeconds, secondsRemaining, quizEndedEarly, timeExpired, finished: examFinished,
-        isWrongRetry, retryQuestionIndices, completedExamScores }
-    : { module: null, completedExamScores };
+  const savedModuleName = isExamSuspended ? suspendedModuleName : selectedModuleName;
+  if (savedModuleName && activeQuestions.length) {
+    if (examFinished) {
+      delete savedExamAttempts[savedModuleName];
+    } else {
+      savedExamAttempts[savedModuleName] = {
+        module: savedModuleName, count: activeQuestions.length, currentIndex, selections, answeredState,
+        matchOptionsCache, totalAllowedSeconds, secondsRemaining, quizEndedEarly, timeExpired,
+        isWrongRetry, retryQuestionIndices
+      };
+    }
+  }
+  const data = {
+    attempts: savedExamAttempts,
+    activeModule: savedModuleName && activeQuestions.length && !examFinished ? savedModuleName : null,
+    completedExamScores
+  };
   try { localStorage.setItem(EXAM_KEY, JSON.stringify(data)); } catch (e) { return; }
   QuizSync.saved();
 }
@@ -767,8 +782,8 @@ function restoreExam() {
   let s;
   try { s = JSON.parse(localStorage.getItem(EXAM_KEY)); } catch (e) { return; }
   if (!s || typeof s !== 'object') return;
-  unfinishedExamProgress = null;
   completedExamScores = {};
+  savedExamAttempts = {};
   if (s.completedExamScores && typeof s.completedExamScores === 'object') {
     MODULE_ORDER.forEach(name => {
       const score = s.completedExamScores[name];
@@ -779,57 +794,76 @@ function restoreExam() {
       }
     });
   }
-  renderModuleGrid();
-  if (!s.module || !MODULE_ORDER.includes(s.module)) return;
-  const qs = getModuleQuestions(s.module);
-  selectedModuleName = s.module;
-  isWrongRetry = s.isWrongRetry === true;
-  retryQuestionIndices = isWrongRetry && Array.isArray(s.retryQuestionIndices)
-    ? s.retryQuestionIndices
-    : [];
-  if (isWrongRetry) {
-    if (!retryQuestionIndices.length || retryQuestionIndices.some(index =>
-      !Number.isInteger(index) || index < 0 || index >= qs.length)) return;
-    activeQuestions = retryQuestionIndices.map(index => qs[index]);
-  } else {
-    if (qs.length !== s.count) return;   // the question bank changed since this was saved
-    activeQuestions = qs;
-    retryQuestionIndices = [];
+  if (s.attempts && typeof s.attempts === 'object') {
+    MODULE_ORDER.forEach(name => {
+      const attempt = s.attempts[name];
+      if (isValidSavedAttempt(name, attempt)) savedExamAttempts[name] = attempt;
+    });
+  } else if (s.module && MODULE_ORDER.includes(s.module)) {
+    const legacyAttempt = { ...s, module: s.module };
+    delete legacyAttempt.completedExamScores;
+    if (isValidSavedAttempt(s.module, legacyAttempt)) {
+      savedExamAttempts[s.module] = legacyAttempt;
+    }
   }
-  if (activeQuestions.length !== s.count) return;
-  currentIndex = Math.min(Math.max(0, Number(s.currentIndex) || 0), activeQuestions.length - 1);
-  selections = s.selections || {};
-  answeredState = s.answeredState || {};
-  matchOptionsCache = s.matchOptionsCache || {};
-  totalAllowedSeconds = Number(s.totalAllowedSeconds) || qs.length * TIME_PER_QUESTION_SECONDS;
-  secondsRemaining = Number.isFinite(s.secondsRemaining) ? s.secondsRemaining : totalAllowedSeconds;
-  quizEndedEarly = !!s.quizEndedEarly;
-  timeExpired = !!s.timeExpired;
-  examFinished = !!s.finished;
+  renderModuleGrid();
+  const moduleName = savedExamAttempts[s.activeModule]
+    ? s.activeModule
+    : MODULE_ORDER.find(name => savedExamAttempts[name]);
+  if (!moduleName) return;
+  loadSavedAttempt(moduleName, savedExamAttempts[moduleName]);
 
   if (examFinished) {
     document.getElementById('select-screen').classList.add('hidden');
     showResults(true);
   } else {
     isExamSuspended = true;
-    suspendedModuleName = s.module;
-    const answeredCount = Object.values(answeredState).filter(answered => answered === true).length;
-    unfinishedExamProgress = {
-      module: s.module,
-      position: currentIndex + 1,
-      answered: answeredCount,
-      total: activeQuestions.length,
-      isWrongRetry
-    };
+    suspendedModuleName = moduleName;
     renderModuleGrid();
     document.getElementById('resume-panel-title').textContent = isWrongRetry
-      ? `${s.module} · Missed-question retake`
-      : s.module;
+      ? `${moduleName} · Missed-question retake`
+      : moduleName;
     document.getElementById('resume-panel-progress').textContent =
       `${currentIndex + 1}/${activeQuestions.length}`;
     document.getElementById('resume-panel-time').textContent = formatTime(secondsRemaining);
     document.getElementById('resume-panel').classList.remove('hidden');
   }
+}
+
+function isValidSavedAttempt(moduleName, attempt) {
+  if (!attempt || typeof attempt !== 'object' || attempt.module !== moduleName
+      || !Number.isInteger(attempt.count) || attempt.count < 1) return false;
+  const questionsForModule = getModuleQuestions(moduleName);
+  if (attempt.isWrongRetry === true) {
+    return Array.isArray(attempt.retryQuestionIndices)
+      && attempt.retryQuestionIndices.length === attempt.count
+      && attempt.retryQuestionIndices.every(index =>
+        Number.isInteger(index) && index >= 0 && index < questionsForModule.length);
+  }
+  return questionsForModule.length === attempt.count;
+}
+
+function loadSavedAttempt(moduleName, attempt) {
+  if (!isValidSavedAttempt(moduleName, attempt)) return false;
+  const qs = getModuleQuestions(moduleName);
+  selectedModuleName = moduleName;
+  isWrongRetry = attempt.isWrongRetry === true;
+  retryQuestionIndices = isWrongRetry ? attempt.retryQuestionIndices : [];
+  activeQuestions = isWrongRetry
+    ? retryQuestionIndices.map(index => qs[index])
+    : qs;
+  currentIndex = Math.min(Math.max(0, Number(attempt.currentIndex) || 0), activeQuestions.length - 1);
+  selections = attempt.selections && typeof attempt.selections === 'object' ? attempt.selections : {};
+  answeredState = attempt.answeredState && typeof attempt.answeredState === 'object' ? attempt.answeredState : {};
+  matchOptionsCache = attempt.matchOptionsCache && typeof attempt.matchOptionsCache === 'object'
+    ? attempt.matchOptionsCache
+    : {};
+  totalAllowedSeconds = Number(attempt.totalAllowedSeconds) || activeQuestions.length * TIME_PER_QUESTION_SECONDS;
+  secondsRemaining = Number.isFinite(attempt.secondsRemaining) ? attempt.secondsRemaining : totalAllowedSeconds;
+  quizEndedEarly = !!attempt.quizEndedEarly;
+  timeExpired = !!attempt.timeExpired;
+  examFinished = attempt.finished === true;
+  return true;
 }
 
 function getModuleQuestions(moduleName) {
@@ -842,7 +876,13 @@ function renderModuleGrid() {
   MODULE_ORDER.forEach(name => {
     const count = getModuleQuestions(name).length;
     const score = completedExamScores[name];
-    const progress = unfinishedExamProgress?.module === name ? unfinishedExamProgress : null;
+    const attempt = savedExamAttempts[name];
+    const answered = attempt
+      ? Object.values(attempt.answeredState || {}).filter(value => value === true).length
+      : 0;
+    const progress = attempt
+      ? { module: name, position: (Number(attempt.currentIndex) || 0) + 1, answered, total: attempt.count, isWrongRetry: attempt.isWrongRetry === true }
+      : null;
     const card = document.createElement('div');
     card.className = 'module-card';
     const source = document.createElement('span');
@@ -865,8 +905,51 @@ function renderModuleGrid() {
     detail.textContent = status.join(' · ');
     card.append(source, title, detail);
     card.onclick = () => selectModule(name, card);
+    if (score || progress) {
+      const reset = document.createElement('button');
+      reset.type = 'button';
+      reset.className = 'module-reset';
+      reset.textContent = 'Reset';
+      reset.setAttribute('aria-label', `Reset ${name} progress and score`);
+      reset.onclick = event => resetModule(name, event);
+      card.appendChild(reset);
+    }
     grid.appendChild(card);
   });
+}
+
+function resetModule(name, event) {
+  event.stopPropagation();
+  if (!confirm(`Reset saved progress and score for ${name}?`)) return;
+
+  delete completedExamScores[name];
+  delete savedExamAttempts[name];
+  const savedModuleName = isExamSuspended ? suspendedModuleName : selectedModuleName;
+  if (activeQuestions.length && savedModuleName === name) {
+    clearInterval(timerInterval);
+    selectedModuleName = null;
+    activeQuestions = [];
+    currentIndex = 0;
+    selections = {};
+    answeredState = {};
+    matchOptionsCache = {};
+    examFinished = false;
+    isWrongRetry = false;
+    retryQuestionIndices = [];
+    isExamSuspended = false;
+    suspendedModuleName = null;
+    document.getElementById('resume-panel').classList.add('hidden');
+    document.getElementById('quiz-screen').classList.add('hidden');
+    document.getElementById('results-screen').classList.add('hidden');
+    document.getElementById('review-screen').classList.add('hidden');
+  } else if (selectedModuleName === name) {
+    selectedModuleName = null;
+  }
+
+  document.getElementById('start-panel').classList.add('hidden');
+  document.querySelectorAll('.module-card').forEach(card => card.classList.remove('selected'));
+  saveExam();
+  renderModuleGrid();
 }
 
 function hasUnfinishedExam() {
@@ -883,9 +966,14 @@ function selectModule(name, cardEl) {
   const minutes = count * (TIME_PER_QUESTION_SECONDS / 60);
 
   document.getElementById('start-panel-title').textContent = name;
-  document.getElementById('start-panel-desc').textContent = MODULE_DESC[name] || '';
+  const savedAttempt = savedExamAttempts[name];
+  const savedProgress = savedAttempt
+    ? ` Saved progress: question ${savedAttempt.currentIndex + 1}/${savedAttempt.count}.`
+    : '';
+  document.getElementById('start-panel-desc').textContent = `${MODULE_DESC[name] || ''}${savedProgress}`;
   document.getElementById('start-panel-count').textContent = count;
   document.getElementById('start-panel-time').textContent = `${minutes} min`;
+  document.getElementById('start-btn').textContent = savedAttempt ? 'Resume Saved Progress' : 'Start Answering';
   document.getElementById('start-panel').classList.remove('hidden');
   document.getElementById('start-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -899,26 +987,28 @@ function formatTime(totalSeconds) {
 
 function startModule() {
   if (hasUnfinishedExam() || !selectedModuleName) return;
-  if (isExamSuspended && !confirm(
-    `Starting ${selectedModuleName} will replace your unfinished ${suspendedModuleName} attempt. Continue?`
-  )) return;
+  const savedAttempt = savedExamAttempts[selectedModuleName];
+  if (savedAttempt && !loadSavedAttempt(selectedModuleName, savedAttempt)) {
+    delete savedExamAttempts[selectedModuleName];
+  }
   isExamSuspended = false;
   suspendedModuleName = null;
-  unfinishedExamProgress = null;
   document.getElementById('resume-panel').classList.add('hidden');
-  activeQuestions = getModuleQuestions(selectedModuleName);
-  isWrongRetry = false;
-  retryQuestionIndices = [];
-  currentIndex = 0;
-  selections = {};
-  answeredState = {};
-  matchOptionsCache = {};
-  quizEndedEarly = false;
-  timeExpired = false;
-  totalAllowedSeconds = activeQuestions.length * TIME_PER_QUESTION_SECONDS;
-  secondsRemaining = totalAllowedSeconds;
+  if (!savedAttempt || !isValidSavedAttempt(selectedModuleName, savedAttempt)) {
+    activeQuestions = getModuleQuestions(selectedModuleName);
+    isWrongRetry = false;
+    retryQuestionIndices = [];
+    currentIndex = 0;
+    selections = {};
+    answeredState = {};
+    matchOptionsCache = {};
+    quizEndedEarly = false;
+    timeExpired = false;
+    totalAllowedSeconds = activeQuestions.length * TIME_PER_QUESTION_SECONDS;
+    secondsRemaining = totalAllowedSeconds;
+    examFinished = false;
+  }
   quizStartTime = Date.now();
-  examFinished = false;
 
   document.getElementById('select-screen').classList.add('hidden');
   document.getElementById('quiz-screen').classList.remove('hidden');
@@ -928,6 +1018,24 @@ function startModule() {
   startTimer();
   loadQuestion();
   userChanged();
+}
+
+function saveAndChooseAnotherModule() {
+  if (!activeQuestions.length || examFinished) return;
+  clearInterval(timerInterval);
+  isExamSuspended = true;
+  suspendedModuleName = selectedModuleName;
+  saveExam();
+  document.getElementById('quiz-screen').classList.add('hidden');
+  document.getElementById('select-screen').classList.remove('hidden');
+  document.getElementById('resume-panel-title').textContent = isWrongRetry
+    ? `${suspendedModuleName} · Missed-question retake`
+    : suspendedModuleName;
+  document.getElementById('resume-panel-progress').textContent = `${currentIndex + 1}/${activeQuestions.length}`;
+  document.getElementById('resume-panel-time').textContent = formatTime(secondsRemaining);
+  document.getElementById('resume-panel').classList.remove('hidden');
+  document.getElementById('start-panel').classList.add('hidden');
+  renderModuleGrid();
 }
 
 function resumeSavedExam() {
@@ -1313,11 +1421,10 @@ function showResults(restoring = false) {
   const timeTaken = totalAllowedSeconds - secondsRemaining;
   const wrongIndices = getIncorrectQuestionIndices();
 
-  unfinishedExamProgress = null;
   if (!isWrongRetry) {
     completedExamScores[selectedModuleName] = { correct, total };
-    if (!restoring) saveExam();
   }
+  if (!restoring || examFinished) saveExam();
   renderModuleGrid();
 
   document.getElementById('results-module-name').textContent = isWrongRetry
@@ -1406,13 +1513,6 @@ function startWrongQuestionRetake() {
   secondsRemaining = totalAllowedSeconds;
   quizStartTime = Date.now();
   examFinished = false;
-  unfinishedExamProgress = {
-    module: selectedModuleName,
-    answered: 0,
-    total: activeQuestions.length,
-    isWrongRetry: true
-  };
-
   document.getElementById('results-screen').classList.add('hidden');
   document.getElementById('review-screen').classList.add('hidden');
   document.getElementById('quiz-screen').classList.remove('hidden');
@@ -1509,7 +1609,6 @@ function backToModuleSelect() {
   retryQuestionIndices = [];
   isExamSuspended = false;
   suspendedModuleName = null;
-  unfinishedExamProgress = null;
   userChanged();
   document.getElementById('select-screen').classList.remove('hidden');
   document.getElementById('quiz-screen').classList.add('hidden');
@@ -1523,6 +1622,7 @@ function backToModuleSelect() {
 
 document.getElementById('start-btn').addEventListener('click', startModule);
 document.getElementById('resume-exam-btn').addEventListener('click', resumeSavedExam);
+document.getElementById('save-choose-module-btn').addEventListener('click', saveAndChooseAnotherModule);
 document.getElementById('check-btn').addEventListener('click', checkAnswer);
 document.getElementById('skip-btn').addEventListener('click', skipQuestion);
 document.getElementById('next-btn').addEventListener('click', nextQuestion);
