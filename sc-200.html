@@ -1297,6 +1297,7 @@ let moduleScores = {};
 let selectedModule = 'all';
 let activeQuestions = [];
 let questionStates = {};
+let examSetScores = {};
 const progressStorageKey = 'sc-200-quiz-progress';
 
 function getModuleNames() {
@@ -1326,6 +1327,19 @@ function populateModuleSelector() {
   });
 }
 
+function updateExamSetOptions() {
+  examSets.forEach((set, index) => {
+    const option = document.querySelector(`#module-select option[value="exam-${index}"]`);
+    const score = examSetScores[index];
+    if (option) {
+      option.textContent = `Exam ${index + 1} of ${examSets.length} (${set.length} mixed questions)` +
+        (score && Number.isFinite(score.correct) && Number.isFinite(score.answered) && score.answered > 0
+          ? ` · ${Math.round((score.correct / score.answered) * 100)}%`
+          : '');
+    }
+  });
+}
+
 function setActiveQuestions() {
   const examMatch = /^exam-(\d+)$/.exec(selectedModule);
   if (examMatch) {
@@ -1349,6 +1363,13 @@ function setSaveStatus(message) {
 }
 
 function saveProgress() {
+  const examMatch = /^exam-(\d+)$/.exec(selectedModule);
+  const answeredCount = correctCount + incorrectCount;
+  if (examMatch && answeredCount > 0) {
+    examSetScores[Number(examMatch[1])] = { correct: correctCount, answered: answeredCount };
+    updateExamSetOptions();
+  }
+
   const progress = {
     currentQuestion,
     correctCount,
@@ -1357,6 +1378,7 @@ function saveProgress() {
     answered,
     questionStates,
     moduleScores,
+    examSetScores,
     selectedModule
   };
 
@@ -1418,6 +1440,10 @@ function restoreProgress() {
   moduleScores = savedProgress.moduleScores && typeof savedProgress.moduleScores === 'object'
     ? savedProgress.moduleScores
     : {};
+  examSetScores = savedProgress.examSetScores && typeof savedProgress.examSetScores === 'object'
+    ? savedProgress.examSetScores
+    : {};
+  updateExamSetOptions();
   initModuleScores();
   setSaveStatus('Saved progress restored');
   return true;

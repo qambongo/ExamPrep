@@ -104,8 +104,13 @@
       <h3>Topic Performance</h3>
       <div id="topic-rows"></div>
     </div>
+    <div class="topic-breakdown hidden" id="wrong-question-review">
+      <h3>Incorrect Questions</h3>
+      <div id="wrong-question-cards"></div>
+    </div>
     <div class="result-actions">
       <button class="btn-secondary" id="review-btn" type="button">Review Answers</button>
+      <button class="btn-secondary hidden" id="retake-wrong-btn" type="button">Retake incorrect questions</button>
       <button class="btn-primary" id="choose-module-btn" type="button">Select Another Module</button>
     </div>
   </div>
@@ -719,6 +724,9 @@ let quizStartTime = null;
 let quizEndedEarly = false;
 let timeExpired = false;
 let examFinished = false;
+let isWrongRetry = false;
+let retryQuestionIndices = [];
+let completedExamScores = {};
 let usedHere = false;   // the user did something in this tab since it was last hidden
 
 /* ---------- Saved progress ----------
@@ -731,8 +739,9 @@ const EXAM_KEY = 'exam-progress:' + PAGE_ID;
 function saveExam() {
   const data = selectedModuleName && activeQuestions.length
     ? { module: selectedModuleName, count: activeQuestions.length, currentIndex, selections, answeredState,
-        matchOptionsCache, totalAllowedSeconds, secondsRemaining, quizEndedEarly, timeExpired, finished: examFinished }
-    : { module: null };
+        matchOptionsCache, totalAllowedSeconds, secondsRemaining, quizEndedEarly, timeExpired, finished: examFinished,
+        isWrongRetry, retryQuestionIndices, completedExamScores }
+    : { module: null, completedExamScores };
   try { localStorage.setItem(EXAM_KEY, JSON.stringify(data)); } catch (e) { return; }
   QuizSync.saved();
 }
@@ -745,12 +754,37 @@ function userChanged() {
 function restoreExam() {
   let s;
   try { s = JSON.parse(localStorage.getItem(EXAM_KEY)); } catch (e) { return; }
-  if (!s || !s.module || !MODULE_ORDER.includes(s.module)) return;
+  if (!s || typeof s !== 'object') return;
+  completedExamScores = {};
+  if (s.completedExamScores && typeof s.completedExamScores === 'object') {
+    MODULE_ORDER.forEach(name => {
+      const score = s.completedExamScores[name];
+      const total = getModuleQuestions(name).length;
+      if (score && Number.isInteger(score.correct) && Number.isInteger(score.total)
+          && score.total === total && score.correct >= 0 && score.correct <= score.total) {
+        completedExamScores[name] = { correct: score.correct, total: score.total };
+      }
+    });
+  }
+  renderModuleGrid();
+  if (!s.module || !MODULE_ORDER.includes(s.module)) return;
   const qs = getModuleQuestions(s.module);
-  if (qs.length !== s.count) return;   // the question bank changed since this was saved
   selectedModuleName = s.module;
-  activeQuestions = qs;
-  currentIndex = Math.min(Math.max(0, Number(s.currentIndex) || 0), qs.length - 1);
+  isWrongRetry = s.isWrongRetry === true;
+  retryQuestionIndices = isWrongRetry && Array.isArray(s.retryQuestionIndices)
+    ? s.retryQuestionIndices
+    : [];
+  if (isWrongRetry) {
+    if (!retryQuestionIndices.length || retryQuestionIndices.some(index =>
+      !Number.isInteger(index) || index < 0 || index >= qs.length)) return;
+    activeQuestions = retryQuestionIndices.map(index => qs[index]);
+  } else {
+    if (qs.length !== s.count) return;   // the question bank changed since this was saved
+    activeQuestions = qs;
+    retryQuestionIndices = [];
+  }
+  if (activeQuestions.length !== s.count) return;
+  currentIndex = Math.min(Math.max(0, Number(s.currentIndex) || 0), activeQuestions.length - 1);
   selections = s.selections || {};
   answeredState = s.answeredState || {};
   matchOptionsCache = s.matchOptionsCache || {};
@@ -762,7 +796,7 @@ function restoreExam() {
 
   document.getElementById('select-screen').classList.add('hidden');
   if (examFinished) {
-    showResults();
+    showResults(true);
   } else {
     document.getElementById('quiz-screen').classList.remove('hidden');
     startTimer();
@@ -779,13 +813,20 @@ function renderModuleGrid() {
   grid.innerHTML = '';
   MODULE_ORDER.forEach(name => {
     const count = getModuleQuestions(name).length;
+    const score = completedExamScores[name];
     const card = document.createElement('div');
     card.className = 'module-card';
-    card.innerHTML = `
-      <span class="weight">${MODULE_LABEL[name]}</span>
-      <h3>${name}</h3>
-      <div class="count">${count} question${count === 1 ? '' : 's'} available</div>
-    `;
+    const source = document.createElement('span');
+    source.className = 'weight';
+    source.textContent = MODULE_LABEL[name];
+    const title = document.createElement('h3');
+    title.textContent = name;
+    const detail = document.createElement('div');
+    detail.className = 'count';
+    detail.textContent = score
+      ? `${count} questions · Last score ${score.correct}/${score.total} (${Math.round((score.correct / score.total) * 100)}%)`
+      : `${count} questions available`;
+    card.append(source, title, detail);
     card.onclick = () => selectModule(name, card);
     grid.appendChild(card);
   });
@@ -816,6 +857,8 @@ function formatTime(totalSeconds) {
 
 function startModule() {
   activeQuestions = getModuleQuestions(selectedModuleName);
+  isWrongRetry = false;
+  retryQuestionIndices = [];
   currentIndex = 0;
   selections = {};
   answeredState = {};
@@ -1193,7 +1236,7 @@ function computeStats() {
   return { correct, incorrect, unanswered, topicStats };
 }
 
-function showResults() {
+function showResults(restoring = false) {
   document.getElementById('results-screen').classList.remove('hidden');
   document.getElementById('review-screen').classList.add('hidden');
 
@@ -1201,8 +1244,17 @@ function showResults() {
   const total = activeQuestions.length;
   const percent = total === 0 ? 0 : Math.round((correct / total) * 100);
   const timeTaken = totalAllowedSeconds - secondsRemaining;
+  const wrongIndices = getIncorrectQuestionIndices();
 
-  document.getElementById('results-module-name').textContent = `${selectedModuleName} — Module Results`;
+  if (!isWrongRetry) {
+    completedExamScores[selectedModuleName] = { correct, total };
+    renderModuleGrid();
+    if (!restoring) saveExam();
+  }
+
+  document.getElementById('results-module-name').textContent = isWrongRetry
+    ? `${selectedModuleName} — Incorrect Question Retake Results`
+    : `${selectedModuleName} — Module Results`;
   document.getElementById('final-percent').textContent = `${percent}%`;
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-correct').textContent = correct;
@@ -1234,6 +1286,65 @@ function showResults() {
     `;
     rows.appendChild(row);
   });
+
+  const wrongPanel = document.getElementById('wrong-question-review');
+  const wrongCards = document.getElementById('wrong-question-cards');
+  const retakeButton = document.getElementById('retake-wrong-btn');
+  wrongCards.innerHTML = '';
+  wrongPanel.classList.toggle('hidden', wrongIndices.length === 0);
+  retakeButton.classList.toggle('hidden', wrongIndices.length === 0);
+  retakeButton.textContent = `Retake incorrect questions (${wrongIndices.length})`;
+  wrongIndices.forEach(index => {
+    const q = activeQuestions[index];
+    const sourceIndex = isWrongRetry ? retryQuestionIndices[index] : index;
+    const card = document.createElement('div');
+    card.className = 'review-item';
+    const label = document.createElement('strong');
+    label.textContent = `Question ${sourceIndex + 1} · ${q.top}${q.sub ? ` · ${q.sub}` : ''}`;
+    const prompt = document.createElement('div');
+    prompt.className = 'question-text';
+    prompt.textContent = q.q;
+    card.append(label, prompt);
+    wrongCards.appendChild(card);
+  });
+}
+
+function getIncorrectQuestionIndices() {
+  return activeQuestions.flatMap((q, index) => {
+    const selected = selections[index] || [];
+    const answered = answeredState[index] === true && selected.length > 0 &&
+      (q.type !== 'match' || !selected.some(value => !value));
+    return answered && !isAnswerCorrect(q, selected) ? [index] : [];
+  });
+}
+
+function startWrongQuestionRetake() {
+  const wrongIndices = getIncorrectQuestionIndices();
+  if (!wrongIndices.length) return;
+
+  const moduleQuestions = getModuleQuestions(selectedModuleName);
+  retryQuestionIndices = wrongIndices.map(index =>
+    isWrongRetry ? retryQuestionIndices[index] : index
+  );
+  activeQuestions = retryQuestionIndices.map(index => moduleQuestions[index]);
+  isWrongRetry = true;
+  currentIndex = 0;
+  selections = {};
+  answeredState = {};
+  matchOptionsCache = {};
+  quizEndedEarly = false;
+  timeExpired = false;
+  totalAllowedSeconds = activeQuestions.length * TIME_PER_QUESTION_SECONDS;
+  secondsRemaining = totalAllowedSeconds;
+  quizStartTime = Date.now();
+  examFinished = false;
+
+  document.getElementById('results-screen').classList.add('hidden');
+  document.getElementById('review-screen').classList.add('hidden');
+  document.getElementById('quiz-screen').classList.remove('hidden');
+  startTimer();
+  loadQuestion();
+  userChanged();
 }
 
 function showReview() {
@@ -1319,6 +1430,8 @@ function backToModuleSelect() {
   clearInterval(timerInterval);
   activeQuestions = [];
   examFinished = false;
+  isWrongRetry = false;
+  retryQuestionIndices = [];
   userChanged();
   document.getElementById('select-screen').classList.remove('hidden');
   document.getElementById('quiz-screen').classList.add('hidden');
@@ -1333,6 +1446,7 @@ document.getElementById('check-btn').addEventListener('click', checkAnswer);
 document.getElementById('skip-btn').addEventListener('click', skipQuestion);
 document.getElementById('next-btn').addEventListener('click', nextQuestion);
 document.getElementById('review-btn').addEventListener('click', showReview);
+document.getElementById('retake-wrong-btn').addEventListener('click', startWrongQuestionRetake);
 document.getElementById('choose-module-btn').addEventListener('click', backToModuleSelect);
 document.getElementById('back-to-results-btn').addEventListener('click', () => {
   document.getElementById('review-screen').classList.add('hidden');

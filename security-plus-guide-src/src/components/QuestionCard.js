@@ -67,6 +67,18 @@ export function QuestionCard(q, state, onScore, index, total) {
   })
 
   card.answer = answer
+  card.reset = () => {
+    state.answered.delete(q.id)
+    state.correct.delete(q.id)
+    card.classList.remove('answered', 'is-correct', 'is-wrong')
+    card.querySelectorAll('.option').forEach(option => {
+      option.disabled = false
+      option.classList.remove('correct', 'wrong')
+    })
+    const explanation = card.querySelector('.explanation')
+    explanation.classList.remove('show', 'wrong-exp')
+    explanation.querySelector('.exp-title').textContent = ''
+  }
 
   return card
 }

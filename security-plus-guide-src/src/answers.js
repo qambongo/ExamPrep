@@ -148,6 +148,17 @@ export function clearTest(testId) {
   }
 }
 
+export function clearAnswer(testId, qid) {
+  const key = `${testId}:${qid}`
+  delete answers[key]
+  delete pending[key]
+  save()
+  if (syncOn) {
+    const id = keyToId.get(key)
+    if (id) api({ clear: [id] }).catch(() => {})
+  }
+}
+
 /** { answered, correct } for a test, from saved answers. */
 export function testScore(testId) {
   let answered = 0, correct = 0

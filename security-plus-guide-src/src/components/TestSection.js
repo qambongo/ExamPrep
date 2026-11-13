@@ -1,5 +1,5 @@
 import { QuestionCard } from './QuestionCard.js'
-import { savedAnswer, recordAnswer, clearTest, onAnswersSynced } from '../answers.js'
+import { savedAnswer, recordAnswer, clearAnswer, clearTest, onAnswersSynced } from '../answers.js'
 
 /**
  * Renders a full practice test section.
@@ -45,6 +45,10 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
         <div class="score-ring" data-ring><div class="score-num" data-num>0/${total}</div></div>
         <div class="score-label">${title}</div>
         <div class="score-grade" data-grade></div>
+        <div class="missed-review" data-missed-review hidden>
+          <h3>Missed questions</h3>
+          <div class="missed-cards" data-missed-cards></div>
+        </div>
         <button class="btn-reset" type="button" data-reset>↺ Reset all questions</button>
       </div>
     </div>
@@ -52,6 +56,7 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
 
   const $ = sel => section.querySelector(sel)
   const container = $('.questions-container')
+  const missedCards = $('[data-missed-cards]')
 
   function updateStrip() {
     const a = state.answered.size
@@ -98,7 +103,37 @@ export function TestSection({ id, domain, title, subtitle, breadcrumb, questions
     $('[data-num]').textContent = `${state.correct.size}/${total}`
     $('[data-ring]').style.setProperty('--p', pct)
     $('[data-grade]').textContent = `${pct}% · ${grade}`
+    renderMissedCards()
     if (scroll) scoreEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  function renderMissedCards() {
+    const missed = questions.map((q, i) => ({ q, i }))
+      .filter(({ q }) => state.answered.has(q.id) && !state.correct.has(q.id))
+    const panel = $('[data-missed-review]')
+    panel.hidden = missed.length === 0
+    missedCards.replaceChildren()
+    missed.forEach(({ q, i }) => {
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'missed-question-card'
+      const number = document.createElement('strong')
+      number.textContent = `Question ${i + 1}`
+      const prompt = document.createElement('span')
+      prompt.textContent = q.question
+      const action = document.createElement('span')
+      action.className = 'missed-question-action'
+      action.textContent = 'Retry question'
+      card.append(number, prompt, action)
+      card.addEventListener('click', () => {
+        clearAnswer(id, q.id)
+        cards[i].reset()
+        updateStrip()
+        $('.test-score').className = 'test-score'
+        cards[i].scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+      missedCards.appendChild(card)
+    })
   }
 
   function resetView(scroll) {

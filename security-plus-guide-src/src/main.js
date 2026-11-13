@@ -189,7 +189,7 @@ async function build(id) {
   const main = document.getElementById('content')
 
   if (id === 'home') {
-    const s = Home(progress)
+    const s = Home(progress, TEST_CONFIGS)
     main.appendChild(s)
     return s
   }

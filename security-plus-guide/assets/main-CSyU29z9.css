@@ -1502,6 +1502,33 @@ tbody tr:hover td { background: color-mix(in srgb, var(--text) 3%, transparent);
   margin-top: 6px;
 }
 
+.missed-review {
+  max-width: 720px;
+  margin: 24px auto 0;
+  text-align: left;
+}
+
+.missed-review h3 { margin: 0 0 10px; font-size: 15px; }
+
+.missed-cards { display: grid; gap: 8px; }
+
+.missed-question-card {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--surface2);
+  color: var(--text2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.missed-question-card:hover { border-color: var(--accent); color: var(--text); }
+.missed-question-card strong { color: var(--red); font-size: 12px; }
+.missed-question-card .missed-question-action { color: var(--accent); font-size: 12px; font-weight: 600; }
+
 .btn-reset {
   font-size: 13.5px;
   font-weight: 550;

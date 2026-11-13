@@ -166,6 +166,7 @@ let answered = false;
 let questionStates = {};
 let moduleScores = {};
 let categoryScores = {};
+let examSetScores = {};
 
 function letterToIndex(letter) { return letter.charCodeAt(0) - 65; }
 
@@ -221,6 +222,19 @@ function populateFilters() {
   });
 }
 
+function updateExamSetOptions() {
+  examSets.forEach((set, index) => {
+    const option = document.querySelector(`#module-select option[value="exam-${index}"]`);
+    const score = examSetScores[index];
+    if (option) {
+      option.textContent = `Exam ${index + 1} of ${examSets.length} (${set.length} mixed questions)` +
+        (score && Number.isFinite(score.correct) && Number.isFinite(score.answered) && score.answered > 0
+          ? ` · ${Math.round((score.correct / score.answered) * 100)}%`
+          : '');
+    }
+  });
+}
+
 function setActiveQuestions() {
   const examMatch = /^exam-(\d+)$/.exec(selectedModule);
   if (examMatch) {
@@ -248,9 +262,17 @@ function setSaveStatus(message) {
 }
 
 function saveProgress() {
+  const examMatch = /^exam-(\d+)$/.exec(selectedModule);
+  const answeredCount = correctCount + incorrectCount;
+  if (examMatch && answeredCount > 0) {
+    examSetScores[Number(examMatch[1])] = { correct: correctCount, answered: answeredCount };
+    updateExamSetOptions();
+  }
+
   const progress = {
     currentQuestion, correctCount, incorrectCount, selectedIndices, answered,
-    questionStates, moduleScores, categoryScores, selectedModule, selectedCategory, selectedDifficulty
+    questionStates, moduleScores, categoryScores, examSetScores,
+    selectedModule, selectedCategory, selectedDifficulty
   };
   try {
     localStorage.setItem(progressStorageKey, JSON.stringify(progress));
@@ -295,6 +317,8 @@ function restoreProgress() {
   questionStates = saved.questionStates && typeof saved.questionStates === 'object' ? saved.questionStates : {};
   moduleScores = saved.moduleScores && typeof saved.moduleScores === 'object' ? saved.moduleScores : {};
   categoryScores = saved.categoryScores && typeof saved.categoryScores === 'object' ? saved.categoryScores : {};
+  examSetScores = saved.examSetScores && typeof saved.examSetScores === 'object' ? saved.examSetScores : {};
+  updateExamSetOptions();
   initScores();
   setSaveStatus('Saved progress restored');
   return true;

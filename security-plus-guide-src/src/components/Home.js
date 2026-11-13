@@ -4,17 +4,18 @@ import { testScore } from '../answers.js'
 /**
  * Dashboard landing page.
  * @param {{ visited: Set<string>, last: string|null }} progress
+ * @param {{ id: string, questions: object[] }[]} testConfigs
  */
-export function Home(progress) {
+export function Home(progress, testConfigs) {
   const section = document.createElement('div')
   section.id = 'sec-home'
   section.className = 'section home'
-  section.innerHTML = template(progress)
-  section.refresh = () => { section.innerHTML = template(progress) }
+  section.innerHTML = template(progress, testConfigs)
+  section.refresh = () => { section.innerHTML = template(progress, testConfigs) }
   return section
 }
 
-function template(progress) {
+function template(progress, testConfigs) {
   const all = [...DOMAINS.flatMap(d => d.items), ...EXTRAS.items]
   const done = all.filter(i => progress.visited.has(i.id)).length
   const pct = Math.round((done / all.length) * 100)
@@ -75,8 +76,16 @@ function template(progress) {
           <div class="domain-tests">
             ${tests.map(t => {
               const s = testScore(t.id)
-              const tag = s.answered ? `<span class="chip-score">${s.correct}/${s.answered}</span>` : ''
-              return `<a class="chip" href="#/${t.id}" title="${s.answered ? `${s.answered} answered, ${s.correct} correct` : 'Not started'}">${ICONS.test} Test ${t.num}${tag}</a>`
+              const total = testConfigs.find(test => test.id === t.id)?.questions.length ?? 0
+              const complete = total > 0 && s.answered >= total
+              const score = complete
+                ? `${s.correct}/${total} · ${Math.round((s.correct / total) * 100)}%`
+                : s.answered ? `${s.correct}/${s.answered}` : ''
+              const tag = score ? `<span class="chip-score">${score}</span>` : ''
+              const title = s.answered
+                ? `${s.answered} answered, ${s.correct} correct${complete ? ` (${Math.round((s.correct / total) * 100)}%)` : ''}`
+                : 'Not started'
+              return `<a class="chip" href="#/${t.id}" title="${title}">${ICONS.test} Test ${t.num}${tag}</a>`
             }).join('')}
           </div>
         </div>

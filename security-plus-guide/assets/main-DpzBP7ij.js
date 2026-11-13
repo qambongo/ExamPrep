@@ -92,6 +92,18 @@ function QuestionCard(q, state, onScore, index, total) {
 		optEl.addEventListener("click", () => answer(optEl.dataset.letter));
 	});
 	card.answer = answer;
+	card.reset = () => {
+		state.answered.delete(q.id);
+		state.correct.delete(q.id);
+		card.classList.remove("answered", "is-correct", "is-wrong");
+		card.querySelectorAll(".option").forEach((option) => {
+			option.disabled = false;
+			option.classList.remove("correct", "wrong");
+		});
+		const explanation = card.querySelector(".explanation");
+		explanation.classList.remove("show", "wrong-exp");
+		explanation.querySelector(".exp-title").textContent = "";
+	};
 	return card;
 }
 //#endregion
@@ -248,6 +260,16 @@ function clearTest(testId) {
 		if (ids.length) api({ clear: ids }).catch(() => {});
 	}
 }
+function clearAnswer(testId, qid) {
+	const key = `${testId}:${qid}`;
+	delete answers[key];
+	delete pending[key];
+	save$1();
+	if (syncOn$1) {
+		const id = keyToId.get(key);
+		if (id) api({ clear: [id] }).catch(() => {});
+	}
+}
 /** { answered, correct } for a test, from saved answers. */
 function testScore(testId) {
 	let answered = 0, correct = 0;
@@ -312,12 +334,17 @@ function TestSection({ id, domain, title, subtitle, breadcrumb, questions }) {
         <div class="score-ring" data-ring><div class="score-num" data-num>0/${total}</div></div>
         <div class="score-label">${title}</div>
         <div class="score-grade" data-grade></div>
+        <div class="missed-review" data-missed-review hidden>
+          <h3>Missed questions</h3>
+          <div class="missed-cards" data-missed-cards></div>
+        </div>
         <button class="btn-reset" type="button" data-reset>↺ Reset all questions</button>
       </div>
     </div>
   `;
 	const $ = (sel) => section.querySelector(sel);
 	const container = $(".questions-container");
+	const missedCards = $("[data-missed-cards]");
 	function updateStrip() {
 		const a = state.answered.size;
 		const c = state.correct.size;
@@ -353,9 +380,43 @@ function TestSection({ id, domain, title, subtitle, breadcrumb, questions }) {
 		$("[data-num]").textContent = `${state.correct.size}/${total}`;
 		$("[data-ring]").style.setProperty("--p", pct);
 		$("[data-grade]").textContent = `${pct}% · ${grade}`;
+		renderMissedCards();
 		if (scroll) scoreEl.scrollIntoView({
 			behavior: "smooth",
 			block: "center"
+		});
+	}
+	function renderMissedCards() {
+		const missed = questions.map((q, i) => ({
+			q,
+			i
+		})).filter(({ q }) => state.answered.has(q.id) && !state.correct.has(q.id));
+		const panel = $("[data-missed-review]");
+		panel.hidden = missed.length === 0;
+		missedCards.replaceChildren();
+		missed.forEach(({ q, i }) => {
+			const card = document.createElement("button");
+			card.type = "button";
+			card.className = "missed-question-card";
+			const number = document.createElement("strong");
+			number.textContent = `Question ${i + 1}`;
+			const prompt = document.createElement("span");
+			prompt.textContent = q.question;
+			const action = document.createElement("span");
+			action.className = "missed-question-action";
+			action.textContent = "Retry question";
+			card.append(number, prompt, action);
+			card.addEventListener("click", () => {
+				clearAnswer(id, q.id);
+				cards[i].reset();
+				updateStrip();
+				$(".test-score").className = "test-score";
+				cards[i].scrollIntoView({
+					behavior: "smooth",
+					block: "center"
+				});
+			});
+			missedCards.appendChild(card);
 		});
 	}
 	function resetView(scroll) {
@@ -903,17 +964,17 @@ function Navbar(goto, progress) {
 * Dashboard landing page.
 * @param {{ visited: Set<string>, last: string|null }} progress
 */
-function Home(progress) {
+function Home(progress, testConfigs) {
 	const section = document.createElement("div");
 	section.id = "sec-home";
 	section.className = "section home";
-	section.innerHTML = template(progress);
+	section.innerHTML = template(progress, testConfigs);
 	section.refresh = () => {
-		section.innerHTML = template(progress);
+		section.innerHTML = template(progress, testConfigs);
 	};
 	return section;
 }
-function template(progress) {
+function template(progress, testConfigs) {
 	const all = [...DOMAINS.flatMap((d) => d.items), ...EXTRAS.items];
 	const done = all.filter((i) => progress.visited.has(i.id)).length;
 	const pct = Math.round(done / all.length * 100);
@@ -973,8 +1034,12 @@ function template(progress) {
           <div class="domain-tests">
             ${tests.map((t) => {
 			const s = testScore(t.id);
-			const tag = s.answered ? `<span class="chip-score">${s.correct}/${s.answered}</span>` : "";
-			return `<a class="chip" href="#/${t.id}" title="${s.answered ? `${s.answered} answered, ${s.correct} correct` : "Not started"}">${ICONS.test} Test ${t.num}${tag}</a>`;
+			const total = testConfigs.find((test) => test.id === t.id)?.questions.length ?? 0;
+			const complete = total > 0 && s.answered >= total;
+			const score = complete ? `${s.correct}/${total} · ${Math.round(s.correct / total * 100)}%` : s.answered ? `${s.correct}/${s.answered}` : "";
+			const tag = score ? `<span class="chip-score">${score}</span>` : "";
+			const title = s.answered ? `${s.answered} answered, ${s.correct} correct${complete ? ` (${Math.round(s.correct / total * 100)}%)` : ""}` : "Not started";
+			return `<a class="chip" href="#/${t.id}" title="${title}">${ICONS.test} Test ${t.num}${tag}</a>`;
 		}).join("")}
           </div>
         </div>
@@ -1558,7 +1623,7 @@ function pagerFor(id) {
 async function build(id) {
 	const main = document.getElementById("content");
 	if (id === "home") {
-		const s = Home(progress);
+		const s = Home(progress, TEST_CONFIGS);
 		main.appendChild(s);
 		return s;
 	}
